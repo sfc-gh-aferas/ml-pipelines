@@ -1,0 +1,11 @@
+# will need to have all elements needed to set up
+deploy:
+  pipelines:
+    - file: train.ipynb
+      schedule: None
+    - file: inference.ipynb
+      schedule: None
+
+N_FEATURES: 5
+N_SAMPLES_TRAIN: 1000
+N_SAMPLES_INFER: 100

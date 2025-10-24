@@ -1,0 +1,7 @@
+# on push to any project repo, any branch
+  # set env var to STAGE
+  # run setup.py for any project repos with changes
+
+# on merge to main
+  # set env var to PROD
+  # run setup.py for any project repos with changes

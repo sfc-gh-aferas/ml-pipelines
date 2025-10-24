@@ -1,0 +1,1 @@
+# utility script to remove a given project
