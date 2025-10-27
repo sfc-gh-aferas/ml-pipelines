@@ -14,14 +14,16 @@ import yaml
 from snowflake.snowpark.session import Session
 from snowflake.core import Root
 from snowflake.core.task import Task
-
-# need to get these from ci/cd env vars
-# ROLE
-# WAREHOUSE
-# COMPUTE_POOL
-# DATABASE
-# GIT_STAGE
-# BRANCH
+from constants import (
+    CONNECTION,
+    DB_NAME,
+    SCHEMA_NAME,
+    ROLE_NAME,
+    WAREHOUSE,
+    #COMPUTE_POOL,
+    #GIT_STAGE,
+    # BRANCH,
+)
 
 def _schedule_notebook(session: Session, fully_qualified_name: str, schedule: str):
 
@@ -29,12 +31,14 @@ def _schedule_notebook(session: Session, fully_qualified_name: str, schedule: st
     task_name = f"{fully_qualified_name.split('.')[-1]}_TASK"
 
     root = Root(session)
-    task = Task(name=task_name, 
-                  definition=f"EXECUTE NOTEBOOOK {fully_qualified_name}();", 
-                  schedule=schedule
-                  warehouse=WAREHOUSE)
+    task = Task(
+        name=task_name, 
+        definition=f"EXECUTE NOTEBOOOK {fully_qualified_name}();", 
+        schedule=schedule,
+        warehouse=WAREHOUSE,
+    )
     # create a task collections objects, specifying the database and schema
-    tasks = root.databases[DATABASE].schemas[SCHEMA].tasks
+    tasks = root.databases[DB_NAME].schemas[SCHEMA_NAME].tasks
     # create the task in Snowflake
     tasks.create(task)
 
@@ -45,8 +49,9 @@ def _schedule_notebook(session: Session, fully_qualified_name: str, schedule: st
 
 def _deploy_notebook(session: Session, notebook_name: str, project_name: str) -> str:
     
-    fully_qualified_name = f"{DATABASE}.{SCHEMA}.{project_name}__{notebook_name}"
-    nb_sql = """CREATE NOTEBOOK IF NOT EXISTS {fully_qualified_name}
+    fully_qualified_name = f"{DB_NAME}.{SCHEMA_NAME}.{project_name}__{notebook_name}"
+    print(fully_qualified_name, session.get_current_role())
+    nb_sql = f"""CREATE NOTEBOOK IF NOT EXISTS {fully_qualified_name}
     FROM '{GIT_STAGE}/branches/{BRANCH}/{project_name}'
     MAIN_FILE = '{notebook_name}.ipynb'
     QUERY_WAREHOUSE = {WAREHOUSE}
@@ -87,7 +92,7 @@ if __name__ == "__main__":
     config = yaml.safe_load(open(f"{args.project_name}/config.yml","r"))
     pipelines = config['deploy']['pipelines']
 
-    session = Session.builder.getOrCreate()
+    session = Session.builder.config("connection_name",CONNECTION).getOrCreate()
     # session level query tags?
 
     scheduled_tasks = []
