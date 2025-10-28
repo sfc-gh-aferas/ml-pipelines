@@ -10,7 +10,8 @@
 # IF PY SCRIPTS
     # create task with MLJob submit_from_stage on current git branch
 
-import yaml
+from january_ml.utils import load_config
+import os
 from snowflake.snowpark.session import Session
 from snowflake.core import Root
 from snowflake.core.task import Task
@@ -21,9 +22,21 @@ from constants import (
     ROLE_NAME,
     WAREHOUSE,
     #COMPUTE_POOL,
-    #GIT_STAGE,
+    GIT_STAGE,
     # BRANCH,
 )
+# temporarily using this approach for testing in absence of access git repo
+def stage_directory(session: Session, project_dir: str):
+
+    stage_name = f"{DB_NAME}.{SCHEMA_NAME}.{GIT_STAGE}"
+    session.sql(f"CREATE STAGE IF NOT EXISTS {stage_name}").collect()
+
+    for f in os.listdir(project_dir):
+        filename = project_dir+"/"+f
+        if not os.path.isdir(filename):
+            session.file.put(filename,stage_name+'/'+project_dir,overwrite=True, auto_compress=False)
+    session.file.put('dist/january_ml-0.0.1-py3-none-any.whl',stage_name, overwrite=True, auto_compress=False)
+    print(f"{project_dir} uploaded to {stage_name}")
 
 def _schedule_notebook(session: Session, fully_qualified_name: str, schedule: str):
 
@@ -50,14 +63,17 @@ def _schedule_notebook(session: Session, fully_qualified_name: str, schedule: st
 def _deploy_notebook(session: Session, notebook_name: str, project_name: str) -> str:
     
     fully_qualified_name = f"{DB_NAME}.{SCHEMA_NAME}.{project_name}__{notebook_name}"
-    print(fully_qualified_name, session.get_current_role())
-    nb_sql = f"""CREATE NOTEBOOK IF NOT EXISTS {fully_qualified_name}
-    FROM '{GIT_STAGE}/branches/{BRANCH}/{project_name}'
-    MAIN_FILE = '{notebook_name}.ipynb'
-    QUERY_WAREHOUSE = {WAREHOUSE}
-    RUNTIME_NAME = 'SYSTEM$BASIC_RUNTIME' 
-    COMPUTE_POOL = '{COMPUTE_POOL}'
-    IDLE_AUTO_SHUTDOWN_TIME_SECONDS = 3600"""
+
+    # TODO: fix for git branch
+    # TODO: fix for compute pool
+    nb_sql = f"""
+        CREATE NOTEBOOK IF NOT EXISTS {fully_qualified_name}
+        FROM @{GIT_STAGE}/{project_name}
+        MAIN_FILE = '{notebook_name}.ipynb'
+        QUERY_WAREHOUSE = {WAREHOUSE}
+        RUNTIME_NAME = 'SYSTEM$BASIC_RUNTIME' 
+        IDLE_AUTO_SHUTDOWN_TIME_SECONDS = 3600
+    """
 
     results = session.sql(nb_sql).collect()
     # logic to handle failure
@@ -89,11 +105,18 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    config = yaml.safe_load(open(f"{args.project_name}/config.yml","r"))
+    config = load_config(f"{args.project_name}/config.yml")
     pipelines = config['deploy']['pipelines']
 
     session = Session.builder.config("connection_name",CONNECTION).getOrCreate()
     # session level query tags?
+    session.use_role(ROLE_NAME)
+    session.use_warehouse(WAREHOUSE)
+    session.use_database(DB_NAME)
+    session.use_schema(SCHEMA_NAME)
+
+    #temporary
+    stage_directory(session, args.project_name)
 
     scheduled_tasks = []
 

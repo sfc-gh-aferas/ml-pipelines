@@ -1,7 +1,7 @@
 # will need to have all elements needed to set up
 deploy:
   pipelines:
-    - file: train.ipynb
+    - file: training.ipynb
       schedule: None
     - file: inference.ipynb
       schedule: None
