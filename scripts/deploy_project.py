@@ -13,8 +13,8 @@
 from january_ml.utils import load_config
 import os
 from snowflake.snowpark.session import Session
-from snowflake.core import Root
-from snowflake.core.task import Task
+from snowflake.core import CreateMode, Root
+from snowflake.core.task.dagv1 import DAG, DAGTask, DAGOperation
 from constants import (
     CONNECTION,
     DB_NAME,
@@ -29,36 +29,14 @@ from constants import (
 def stage_directory(session: Session, project_dir: str):
 
     stage_name = f"{DB_NAME}.{SCHEMA_NAME}.{GIT_STAGE}"
-    session.sql(f"CREATE STAGE IF NOT EXISTS {stage_name}").collect()
+    session.sql(f"CREATE OR REPLACE STAGE {stage_name}").collect()
 
-    for f in os.listdir(project_dir):
-        filename = project_dir+"/"+f
+    for f in os.listdir("projects/"+project_dir):
+        filename = "projects/"+project_dir+"/"+f
         if not os.path.isdir(filename):
-            session.file.put(filename,stage_name+'/'+project_dir,overwrite=True, auto_compress=False)
+            session.file.put(filename,stage_name+"/"+project_dir,overwrite=True, auto_compress=False)
     session.file.put('dist/january_ml-0.0.1-py3-none-any.whl',stage_name, overwrite=True, auto_compress=False)
     print(f"{project_dir} uploaded to {stage_name}")
-
-def _schedule_notebook(session: Session, fully_qualified_name: str, schedule: str):
-
-    # validate schedule (see e2e repo cli_utils.validate_schedule)
-    task_name = f"{fully_qualified_name.split('.')[-1]}_TASK"
-
-    root = Root(session)
-    task = Task(
-        name=task_name, 
-        definition=f"EXECUTE NOTEBOOOK {fully_qualified_name}();", 
-        schedule=schedule,
-        warehouse=WAREHOUSE,
-    )
-    # create a task collections objects, specifying the database and schema
-    tasks = root.databases[DB_NAME].schemas[SCHEMA_NAME].tasks
-    # create the task in Snowflake
-    tasks.create(task)
-
-    #logic to handle failure
-    print(f"Successfully scheduled task {task_name}")
-    return tasks[task_name]
-
 
 def _deploy_notebook(session: Session, notebook_name: str, project_name: str) -> str:
     
@@ -67,9 +45,9 @@ def _deploy_notebook(session: Session, notebook_name: str, project_name: str) ->
     # TODO: fix for git branch
     # TODO: fix for compute pool
     nb_sql = f"""
-        CREATE NOTEBOOK IF NOT EXISTS {fully_qualified_name}
-        FROM @{GIT_STAGE}/{project_name}
-        MAIN_FILE = '{notebook_name}.ipynb'
+        CREATE OR REPLACE NOTEBOOK {fully_qualified_name}
+        FROM @{GIT_STAGE}
+        MAIN_FILE = '{project_name}/{notebook_name}.ipynb'
         QUERY_WAREHOUSE = {WAREHOUSE}
         RUNTIME_NAME = 'SYSTEM$BASIC_RUNTIME' 
         IDLE_AUTO_SHUTDOWN_TIME_SECONDS = 3600
@@ -80,7 +58,35 @@ def _deploy_notebook(session: Session, notebook_name: str, project_name: str) ->
 
     print(f"Successfully deployed notebook {fully_qualified_name}")
 
-    return fully_qualified_name
+    return f"EXECUTE NOTEBOOK {fully_qualified_name}();"
+
+def create_dag(
+        project_name: str, 
+        dag_name: str,
+        schedule: str,
+        task_files: list
+    ) -> DAG:
+
+    with DAG(name=dag_name,schedule=schedule, warehouse=WAREHOUSE) as dag:
+        prev_task = None
+        for f in task_files:
+            name, filetype = ".".join(f.split(".")[:-1]), f.split(".")[-1]
+            if filetype == "ipynb":
+                nb_deploy = _deploy_notebook(
+                    session=session,
+                    notebook_name=name, 
+                    project_name=project_name
+                )
+                task = DAGTask(
+                    name=name,
+                    definition=nb_deploy,
+                )
+            # elif filetype == "py":
+            # else:
+                # needs to be py or ipynb
+            if prev_task:
+                task.add_predecessors(prev_task)
+    return dag
 
 if __name__ == "__main__":
 
@@ -105,8 +111,8 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    config = load_config(f"{args.project_name}/config.yml")
-    pipelines = config['deploy']['pipelines']
+    config = load_config(args.project_name)
+    dags = config['deploy']['DAGS']
 
     session = Session.builder.config("connection_name",CONNECTION).getOrCreate()
     # session level query tags?
@@ -118,29 +124,27 @@ if __name__ == "__main__":
     #temporary
     stage_directory(session, args.project_name)
 
-    scheduled_tasks = []
+    api_root = Root(session)
+    db = api_root.databases[DB_NAME]
+    schema = db.schemas[SCHEMA_NAME]
+    dag_op = DAGOperation(schema)
 
-    for p in pipelines:
-        name, filetype = ".".join(p["file"].split(".")[:-1]), p["file"].split(".")[-1]
-        if filetype == "ipynb":
-            nb_deploy = _deploy_notebook(
-                session=session,
-                notebook_name=name, 
-                project_name=args.project_name
-            )
-            task = _schedule_notebook(
-                session=session,
-                fully_qualified_name=nb_deploy,
-                schedule=p['schedule']
-            )
-            scheduled_tasks.append(task)
-        # elif filetype == "py":
-        # else:
-            # needs to be py or ipynb
-    
-    if args.run_tasks:
-        for t in scheduled_tasks:
-            result = t.execute() 
-            # how to handle failure
+    deployed_dags = []
+    for d in dags:
+        dag = create_dag(
+            project_name=args.project_name,
+            dag_name=d["name"],
+            schedule=d["schedule"],
+            task_files=d["task_files"],
+        )
+        dag_op.deploy(dag, mode=CreateMode.or_replace)
+        deployed_dags.append(dag)
+            
+    if args.run_dag:
+        for d in deployed_dags:
+            dag_op.run(d)
+        #result = _wait_for_run_to_complete(session, dag)
+        #if result != "SUCCEEDED":
+        #    raise Exception(f"DAG failed with result {result}")
 
     session.close()

@@ -1,0 +1,15 @@
+# will need to have all elements needed to set up
+deploy:
+  DAGS:
+    - name: training
+      task_files:
+        - training.ipynb
+      schedule: 
+    - name: inference
+      task_files:
+        - training.ipynb
+      schedule: 
+
+N_FEATURES: 5
+N_SAMPLES_TRAIN: 1000
+N_SAMPLES_INFER: 100
