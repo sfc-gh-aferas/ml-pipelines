@@ -12,11 +12,12 @@
 
 from january_ml.utils import load_config
 import os
+import time
 from snowflake.snowpark.session import Session
 from snowflake.core import CreateMode, Root
 from snowflake.ml.jobs import submit_from_stage
 from snowflake.core.task.dagv1 import DAG, DAGTask, DAGOperation
-from constants import (
+from january_ml.constants import (
     CONNECTION,
     DB_NAME,
     SCHEMA_NAME,
@@ -25,19 +26,85 @@ from constants import (
     COMPUTE_POOL,
     GIT_STAGE,
     JOB_STAGE,
+    PACKAGE_STAGE,
     # BRANCH,
 )
+def _wait_for_run_to_complete(session: Session, dag: DAG) -> str:
+    """
+    Wait for a DAG run to complete and return the final status.
+
+    This function monitors the most recent DAG run and waits for it to complete.
+    It uses exponential backoff to poll the task graph status and returns the final result.
+
+    Args:
+        session (Session): Snowflake session object
+        dag (DAG): The DAG object to monitor
+
+    Returns:
+        str: The final status of the DAG run (e.g., "SUCCEEDED", "FAILED")
+
+    Raises:
+        RuntimeError: If no recent runs are found for the DAG
+    """
+    # NOTE: We assume the most recent run is our run
+    # It would be better to add some unique identifier to the DAG to make it easier to identify the run
+    recent_runs = session.sql(
+        f"""
+        select run_id
+            from table({DB_NAME}.information_schema.current_task_graphs(
+                root_task_name => '{dag.name.upper()}'
+            ))
+            where database_name = '{DB_NAME}'
+            and schema_name = '{SCHEMA_NAME}'
+            and scheduled_from = 'EXECUTE TASK';
+        """,
+    ).collect()
+    if len(recent_runs) == 0:
+        raise RuntimeError("No recent runs found. Did the DAG fail to run?")
+    run_id = recent_runs[0][0]
+    print(f"DAG runId: {run_id}")
+
+    start_time = time.time()
+    dag_result = None
+    while dag_result is None:
+        result = session.sql(
+            f"""
+            select state
+                from table({DB_NAME}.information_schema.complete_task_graphs(
+                    root_task_name=>'{dag.name.upper()}'
+                ))
+                where database_name = '{DB_NAME}'
+                and schema_name = '{SCHEMA_NAME}'
+                and run_id = {run_id};
+            """,
+        ).collect()
+
+        if len(result) > 0:
+            dag_result = result[0][0]
+            print(
+                f"DAG completed after {(time.time() - start_time):.2f} seconds with result {dag_result}"
+            )
+            break
+
+        wait_time = min(
+            2 ** ((time.time() - start_time) / 10), 5
+        )  # Exponential backoff capped at 5 seconds
+        time.sleep(wait_time)
+
+    return dag_result
+
 # temporarily using this approach for testing in absence of access git repo
 def stage_directory(session: Session, project_dir: str):
 
     session.sql(f"CREATE OR REPLACE STAGE {GIT_STAGE}").collect()
     session.sql(f"CREATE OR REPLACE STAGE {JOB_STAGE}").collect()
+    session.sql(f"CREATE OR REPLACE STAGE PACKAGE_STAGE").collect()
 
     for f in os.listdir("projects/"+project_dir):
         filename = "projects/"+project_dir+"/"+f
         if not os.path.isdir(filename):
             session.file.put(filename,GIT_STAGE+"/"+project_dir,overwrite=True, auto_compress=False)
-    session.file.put('dist/january_ml-0.0.1-py3-none-any.whl',"PACKAGE_STAGE", overwrite=True, auto_compress=False)
+    session.file.put('dist/january_ml-0.0.1-py3-none-any.whl',f"{PACKAGE_STAGE}/dist", overwrite=True, auto_compress=False)
     print(f"{project_dir} uploaded to {GIT_STAGE}")
 
 def _deploy_notebook(session: Session, notebook_name: str, project_name: str) -> str:
@@ -52,10 +119,13 @@ def _deploy_notebook(session: Session, notebook_name: str, project_name: str) ->
         MAIN_FILE = '{notebook_name}.ipynb'
         QUERY_WAREHOUSE = {WAREHOUSE}
         RUNTIME_NAME = 'SYSTEM$BASIC_RUNTIME'
-        IDLE_AUTO_SHUTDOWN_TIME_SECONDS = 3600
+        COMPUTE_POOL = {COMPUTE_POOL}
+        IDLE_AUTO_SHUTDOWN_TIME_SECONDS = 3600;
     """
-
     results = session.sql(nb_sql).collect()
+
+    alter_sql = f"""ALTER NOTEBOOK {fully_qualified_name} ADD LIVE VERSION FROM LAST;"""
+    session.sql(alter_sql).collect()
     # logic to handle failure
 
     print(f"Successfully deployed notebook {fully_qualified_name}")
@@ -73,7 +143,7 @@ def _deploy_mljob(session: Session, filename: str, project_name: str):
             stage_name=JOB_STAGE,
             session=session,
             pip_requirements=["snowflake-snowpark-python","snowflake-ml-python","scikit-learn","dist/january_ml-0.0.1-py3-none-any.whl"],
-            imports=["dist"]
+            imports=[f"@{PACKAGE_STAGE}/dist"]
         )
         return job.result()
 
@@ -95,7 +165,6 @@ def create_dag(
     ) as dag:
         prev_task = None
         for f in task_files:
-            print(f)
             name, filetype = ".".join(f.split(".")[:-1]), f.split(".")[-1]
             if filetype == "ipynb":
                 nb_deploy = _deploy_notebook(
@@ -179,8 +248,8 @@ if __name__ == "__main__":
     if args.run_dag:
         for d in deployed_dags:
             dag_op.run(d)
-        #result = _wait_for_run_to_complete(session, dag)
-        #if result != "SUCCEEDED":
-        #    raise Exception(f"DAG failed with result {result}")
+            result = _wait_for_run_to_complete(session, d)
+            if result != "SUCCEEDED":
+                raise Exception(f"DAG failed with result {result}")
 
     session.close()
