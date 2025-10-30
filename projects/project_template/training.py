@@ -1,13 +1,17 @@
 # %%
-import utils
-import config as c
+from january_ml.utils import load_config
+from utils import get_data
+
 from sklearn.linear_model import LinearRegression
 
 from snowflake.snowpark.session import Session
 from snowflake.ml.registry import Registry
 
+config = load_config('project_template')
+
+
 # %%
-x,y = utils.get_data(c.N_SAMPLES_TRAIN)
+x,y = get_data(config["N_SAMPLES_TRAIN"], config["N_FEATURES"])
 
 # %%
 lr = LinearRegression()

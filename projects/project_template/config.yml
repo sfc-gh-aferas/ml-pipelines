@@ -1,13 +1,16 @@
 # will need to have all elements needed to set up
+project_name: project_template
+
 deploy:
   DAGS:
     - name: training
       task_files:
         - training.ipynb
+        - inference.py
       schedule: 
     - name: inference
       task_files:
-        - training.ipynb
+        - inference.py
       schedule: 
 
 N_FEATURES: 5

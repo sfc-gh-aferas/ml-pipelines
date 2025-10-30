@@ -1,12 +1,14 @@
 # %%
+from january_ml.utils import load_config
 import utils
-import config as c
 
 from snowflake.snowpark.session import Session
 from snowflake.ml.registry import Registry
 
+config = load_config("project_template")
+
 # %%
-x,y = utils.get_data(c.N_SAMPLES_INFER)
+x,y = utils.get_data(config["N_SAMPLES_INFER"], config["N_FEATURES"])
 
 # %%
 session = Session.builder.getOrCreate()

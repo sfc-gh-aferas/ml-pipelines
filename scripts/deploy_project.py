@@ -14,6 +14,7 @@ from january_ml.utils import load_config
 import os
 from snowflake.snowpark.session import Session
 from snowflake.core import CreateMode, Root
+from snowflake.ml.jobs import submit_from_stage
 from snowflake.core.task.dagv1 import DAG, DAGTask, DAGOperation
 from constants import (
     CONNECTION,
@@ -21,22 +22,23 @@ from constants import (
     SCHEMA_NAME,
     ROLE_NAME,
     WAREHOUSE,
-    #COMPUTE_POOL,
+    COMPUTE_POOL,
     GIT_STAGE,
+    JOB_STAGE,
     # BRANCH,
 )
 # temporarily using this approach for testing in absence of access git repo
 def stage_directory(session: Session, project_dir: str):
 
-    stage_name = f"{DB_NAME}.{SCHEMA_NAME}.{GIT_STAGE}"
-    session.sql(f"CREATE OR REPLACE STAGE {stage_name}").collect()
+    session.sql(f"CREATE OR REPLACE STAGE {GIT_STAGE}").collect()
+    session.sql(f"CREATE OR REPLACE STAGE {JOB_STAGE}").collect()
 
     for f in os.listdir("projects/"+project_dir):
         filename = "projects/"+project_dir+"/"+f
         if not os.path.isdir(filename):
-            session.file.put(filename,stage_name+"/"+project_dir,overwrite=True, auto_compress=False)
-    session.file.put('dist/january_ml-0.0.1-py3-none-any.whl',stage_name, overwrite=True, auto_compress=False)
-    print(f"{project_dir} uploaded to {stage_name}")
+            session.file.put(filename,GIT_STAGE+"/"+project_dir,overwrite=True, auto_compress=False)
+    session.file.put('dist/january_ml-0.0.1-py3-none-any.whl',"PACKAGE_STAGE", overwrite=True, auto_compress=False)
+    print(f"{project_dir} uploaded to {GIT_STAGE}")
 
 def _deploy_notebook(session: Session, notebook_name: str, project_name: str) -> str:
     
@@ -46,10 +48,10 @@ def _deploy_notebook(session: Session, notebook_name: str, project_name: str) ->
     # TODO: fix for compute pool
     nb_sql = f"""
         CREATE OR REPLACE NOTEBOOK {fully_qualified_name}
-        FROM @{GIT_STAGE}
-        MAIN_FILE = '{project_name}/{notebook_name}.ipynb'
+        FROM @{GIT_STAGE}/{project_name}
+        MAIN_FILE = '{notebook_name}.ipynb'
         QUERY_WAREHOUSE = {WAREHOUSE}
-        RUNTIME_NAME = 'SYSTEM$BASIC_RUNTIME' 
+        RUNTIME_NAME = 'SYSTEM$BASIC_RUNTIME'
         IDLE_AUTO_SHUTDOWN_TIME_SECONDS = 3600
     """
 
@@ -60,6 +62,23 @@ def _deploy_notebook(session: Session, notebook_name: str, project_name: str) ->
 
     return f"EXECUTE NOTEBOOK {fully_qualified_name}();"
 
+def _deploy_mljob(session: Session, filename: str, project_name: str):
+
+    def job_func(session: Session) -> str:
+        stage_path = f"@{GIT_STAGE}/{project_name}"
+        job = submit_from_stage(
+            source=stage_path,
+            compute_pool=COMPUTE_POOL,
+            entrypoint=f"{filename}",
+            stage_name=JOB_STAGE,
+            session=session,
+            pip_requirements=["snowflake-snowpark-python","snowflake-ml-python","scikit-learn","dist/january_ml-0.0.1-py3-none-any.whl"],
+            imports=["dist"]
+        )
+        return job.result()
+
+    return job_func
+
 def create_dag(
         project_name: str, 
         dag_name: str,
@@ -67,9 +86,16 @@ def create_dag(
         task_files: list
     ) -> DAG:
 
-    with DAG(name=dag_name,schedule=schedule, warehouse=WAREHOUSE) as dag:
+    with DAG(
+        name=dag_name,
+        schedule=schedule, 
+        warehouse=WAREHOUSE, 
+        stage_location=JOB_STAGE,
+        packages=["snowflake-ml-python","snowflake-snowpark-python"],
+    ) as dag:
         prev_task = None
         for f in task_files:
+            print(f)
             name, filetype = ".".join(f.split(".")[:-1]), f.split(".")[-1]
             if filetype == "ipynb":
                 nb_deploy = _deploy_notebook(
@@ -81,11 +107,21 @@ def create_dag(
                     name=name,
                     definition=nb_deploy,
                 )
-            # elif filetype == "py":
+            elif filetype == "py":
+                mljob = _deploy_mljob(
+                    session=session,
+                    filename=f,
+                    project_name=project_name
+                )
+                task = DAGTask(
+                    name=name,
+                    definition=mljob,
+                )
             # else:
                 # needs to be py or ipynb
             if prev_task:
-                task.add_predecessors(prev_task)
+                prev_task >> task
+            prev_task=task
     return dag
 
 if __name__ == "__main__":
@@ -103,7 +139,7 @@ if __name__ == "__main__":
     )
 
     parser.add_argument(
-        "--run-tasks",
+        "--run-dag",
         action="store_true",
         default=False,
         help="Execute all tasks immediately after deployment. If not specified, the tasks will only be deployed and can be run manually or according to the schedule.",
