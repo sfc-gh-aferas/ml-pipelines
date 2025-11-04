@@ -29,7 +29,6 @@ from january_ml.constants import (
     COMPUTE_POOL,
     GIT_STAGE,
     JOB_STAGE,
-    PACKAGE_STAGE,
     # BRANCH,
 )
 def _wait_for_run_to_complete(session: Session, dag: DAG) -> str:
@@ -136,14 +135,13 @@ def _deploy_notebook(session: Session, notebook_file: str, project_name: str) ->
     return fully_qualified_name
 
 def _get_return_vals(task_context: TaskContext, return_from_tasks: list) -> list:
-
+    # TODO validation
     values = []
     for task in return_from_tasks:
         val = json.loads(task_context.get_predecessor_return_value(task).replace("'",'"'))
-        if isinstance(val, list):
-            values += val
-        else:
-            values.append(val)
+        if isinstance(val, dict):
+            val = [i for k,v in val.items() for i in ("--"+str(k),str(v))]
+        values += val
     return values
 
 def _get_notebook_runner(fully_qualified_name: str, return_from_tasks: list = []) -> Callable:
@@ -151,7 +149,7 @@ def _get_notebook_runner(fully_qualified_name: str, return_from_tasks: list = []
     def nb_func(session: Session) -> str:
         ctx = TaskContext(session)
         params = _get_return_vals(task_context=ctx, return_from_tasks=return_from_tasks)
-        params = ",".join([","+str(v).replace("'",'"')+"'" for v in params])
+        params = "'"+"','".join(params)+"'"
         ctx.set_return_value(params)
         return session.sql(f"EXECUTE NOTEBOOK {fully_qualified_name}({params});").collect()
         
@@ -173,7 +171,7 @@ def _get_mljob_runner(filename: str, project_name: str, return_from_tasks: list 
             session=session,
             args=params,
             pip_requirements=["-r ../app/project-requirements.txt"],
-            imports=[f"@{PACKAGE_STAGE}/dist"]
+            imports=["@PACKAGE_STAGE/dist"]
         )
         ctx.set_return_value(job.result())
         return job.result()

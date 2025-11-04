@@ -1,13 +1,14 @@
 # %%
-import sys
+import argparse
 
+parser = argparse.ArgumentParser("test")
 
-# %%
-v = sys.argv[1]
-print("HELLO THE VERSION IS", v)
+parser.add_argument(
+    "--woo",
+)
+args = parser.parse_args()
 
-
-__return__ = {v.values()[0]:"beep"}
+__return__ = {args.woo:"beep"}
 # %%
 
 
