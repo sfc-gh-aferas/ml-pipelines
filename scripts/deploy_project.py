@@ -142,7 +142,7 @@ def _deploy_mljob(session: Session, filename: str, project_name: str):
             entrypoint=f"{filename}",
             stage_name=JOB_STAGE,
             session=session,
-            pip_requirements=["snowflake-snowpark-python","snowflake-ml-python","scikit-learn","dist/january_ml-0.0.1-py3-none-any.whl"],
+            pip_requirements=["-r ../app/project-requirements.txt"],
             imports=[f"@{PACKAGE_STAGE}/dist"]
         )
         return job.result()
