@@ -7,6 +7,7 @@ from sklearn.linear_model import LinearRegression
 from snowflake.snowpark.session import Session
 from snowflake.ml.registry import Registry
 
+"""
 config = load_config('project_template')
 
 
@@ -24,11 +25,12 @@ session = Session.builder.getOrCreate()
 reg = Registry(session=session)
 
 # %%
-reg.log_model(model=lr, model_name="TESTMODEL", sample_input_data=x)
+mv = reg.log_model(model=lr, model_name="TESTMODEL", sample_input_data=x)
 
 # %%
 reg.show_models()
-
+"""
+__return__ = {"woo":"hoo"}
 # %%
 
 

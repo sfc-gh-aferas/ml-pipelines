@@ -4,13 +4,23 @@ project_name: project_template
 deploy:
   DAGS:
     - name: training
-      task_files:
-        - training.ipynb
-        - inference.py
-      schedule: 
-    - name: inference
-      task_files:
-        - inference.py
+      tasks:
+        - name: training
+          file: training.py
+        - name: beep
+          file: beep.py
+          dep: training
+        - name: boop
+          file: boop.py
+          dep: training
+        - name: inference
+          file: inference.ipynb
+          dep: 
+            - beep
+            - boop  
+        - name: final
+          file: blorp.py
+          final: True 
       schedule: 
 
 N_FEATURES: 5
