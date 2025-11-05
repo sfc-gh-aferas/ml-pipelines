@@ -7,9 +7,11 @@ deploy:
       tasks:
         - name: training
           file: training.py
+          mljob: True
         - name: beep
           file: beep.py
           dep: training
+          mljob: True
         - name: boop
           file: boop.py
           dep: training

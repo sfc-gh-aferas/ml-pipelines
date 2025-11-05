@@ -14,8 +14,12 @@ from january_ml.utils import load_config
 import os
 import json
 import time
+import shutil
+import importlib
+from typing import Union
 from collections.abc import Callable
 from snowflake.snowpark.session import Session
+from snowflake.snowpark.stored_procedure import StoredProcedureRegistration
 from snowflake.core import CreateMode, Root
 from snowflake.ml.jobs import submit_from_stage
 from snowflake.core.task.dagv1 import DAG, DAGTask, DAGOperation
@@ -106,7 +110,7 @@ def stage_directory(session: Session, project_dir: str):
         filename = "projects/"+project_dir+"/"+f
         if not os.path.isdir(filename):
             session.file.put(filename,GIT_STAGE+"/"+project_dir,overwrite=True, auto_compress=False)
-    session.file.put('dist/january_ml-0.0.1-py3-none-any.whl',f"{PACKAGE_STAGE}/dist", overwrite=True, auto_compress=False)
+    session.file.put('dist/january_ml-0.0.1-py3-none-any.whl',"PACKAGE_STAGE/dist", overwrite=True, auto_compress=False)
     print(f"{project_dir} uploaded to {GIT_STAGE}")
 
 def _deploy_notebook(session: Session, notebook_file: str, project_name: str) -> str:
@@ -116,6 +120,7 @@ def _deploy_notebook(session: Session, notebook_file: str, project_name: str) ->
 
     # TODO: fix for git branch
     # TODO: fix for compute pool
+    
     nb_sql = f"""
         CREATE OR REPLACE NOTEBOOK {fully_qualified_name}
         FROM @{GIT_STAGE}/{project_name}
@@ -134,23 +139,25 @@ def _deploy_notebook(session: Session, notebook_file: str, project_name: str) ->
     print(f"Successfully deployed notebook {fully_qualified_name}")
     return fully_qualified_name
 
-def _get_return_vals(task_context: TaskContext, return_from_tasks: list) -> list:
+def _get_return_vals(task_context: TaskContext, return_from_tasks: list, script_args: bool = False) -> Union[list,dict]:
     # TODO validation
-    values = []
-    for task in return_from_tasks:
-        val = json.loads(task_context.get_predecessor_return_value(task).replace("'",'"'))
-        if isinstance(val, dict):
-            val = [i for k,v in val.items() for i in ("--"+str(k),str(v))]
-        values += val
-    return values
+    if script_args:
+        kw = []
+        for task in return_from_tasks:
+            val = json.loads(task_context.get_predecessor_return_value(task).replace("'",'"'))
+            kw += [i for k,v in val.items() for i in ("--"+str(k),str(v))]
+    else:
+        kw = {}
+        for task in return_from_tasks:
+            kw.update(json.loads(task_context.get_predecessor_return_value(task).replace("'",'"')))
+    return kw
 
 def _get_notebook_runner(fully_qualified_name: str, return_from_tasks: list = []) -> Callable:
 
     def nb_func(session: Session) -> str:
         ctx = TaskContext(session)
-        params = _get_return_vals(task_context=ctx, return_from_tasks=return_from_tasks)
+        params = _get_return_vals(task_context=ctx, return_from_tasks=return_from_tasks, script_args=True)
         params = "'"+"','".join(params)+"'"
-        ctx.set_return_value(params)
         return session.sql(f"EXECUTE NOTEBOOK {fully_qualified_name}({params});").collect()
         
     return nb_func
@@ -160,7 +167,7 @@ def _get_mljob_runner(filename: str, project_name: str, return_from_tasks: list 
     def job_func(session: Session) ->  str:
 
         ctx = TaskContext(session)
-        params = _get_return_vals(task_context=ctx, return_from_tasks=return_from_tasks)
+        params = _get_return_vals(task_context=ctx, return_from_tasks=return_from_tasks, script_args=True)
             
         stage_path = f"@{GIT_STAGE}/{project_name}"
         job = submit_from_stage(
@@ -178,7 +185,27 @@ def _get_mljob_runner(filename: str, project_name: str, return_from_tasks: list 
 
     return job_func
 
-def _get_task_definition(session: Session, file: str, project_name: str, return_from_tasks: list = []) -> Callable:
+def _get_func_runner(filename: str, return_from_tasks: list = []) -> Callable:
+
+    def func(session: Session) -> str:
+        ctx = TaskContext(session)
+        params = _get_return_vals(task_context=ctx, return_from_tasks=return_from_tasks)
+
+        mod_name = os.path.splitext(filename)[0]
+        module = importlib.import_module(mod_name)
+        results = module.main(**params)
+        ctx.set_return_value(results)
+        return results
+
+    return func
+
+def _get_task_definition(
+    session: Session,
+    file: str, 
+    project_name: str,
+    mljob: bool,
+    return_from_tasks: list = []
+) -> Callable:
     filename, filetype = os.path.splitext(file)
     if filetype == ".ipynb":
         fully_qualified_name = _deploy_notebook(
@@ -191,31 +218,63 @@ def _get_task_definition(session: Session, file: str, project_name: str, return_
             return_from_tasks=return_from_tasks,
         )
     elif filetype == ".py":
-        task_func = _get_mljob_runner(
-            filename=file,
-            project_name=project_name,
-            return_from_tasks=return_from_tasks,
-        )
+        if mljob:
+            task_func = _get_mljob_runner(
+                filename=file,
+                project_name=project_name,
+                return_from_tasks=return_from_tasks,
+            )
+        else:
+            task_func = _get_func_runner(
+                filename=file,
+                return_from_tasks=return_from_tasks,
+            )
     else:
         raise ValueError("Filetype must be py or ipynb")
     return task_func
 
-def _validate_config(task_config: dict) -> dict:
-    valid_dict = dict(
-        name=task_config["name"],
-        file=task_config["file"],
-        dep=task_config.get("dep",[]),
-        final=task_config.get("final",False),
-    )
-    if not isinstance(valid_dict["dep"],list):
-        valid_dict["dep"] = [valid_dict["dep"]]
-    return valid_dict
+def _validate_dags(dags: list[dict]) -> list[dict]:
+    valid_list = []
+    for dag_config in dags:
+        valid_dag = dict(
+            name=dag_config["name"],
+            schedule=dag_config["schedule"],
+            tasks=[],
+            import_zip=False
+        )
+        for task_config in dag_config["tasks"]:
+            valid_dict = dict(
+                name=task_config["name"],
+                file=task_config["file"],
+                dep=task_config.get("dep",[]),
+                final=task_config.get("final",False),
+                mljob=task_config.get("mljob",False)
+            )
+            if not isinstance(valid_dict["dep"],list):
+                valid_dict["dep"] = [valid_dict["dep"]]
+            if not isinstance(valid_dict["final"],bool):
+                raise ValueError("Config 'final' must be True or False")
+            if not isinstance(valid_dict["mljob"],bool):
+                raise ValueError("Config 'mljob' must be True or False")
+            if (os.path.splitext(valid_dict["file"])[1] == ".py") & (not valid_dict["mljob"]):
+                valid_dag["import_zip"] = True
+            valid_dag["tasks"].append(valid_dict)
+        valid_list.append(valid_dag)
+    return valid_list
+
+def _stage_zip(session: Session, project_name: str) -> str:
+    zipfile = shutil.make_archive("directory",'zip',f"projects/{project_name}")
+    result = session.file.put(zipfile,"PACKAGE_STAGE",overwrite=True)
+    os.remove(zipfile)
+    return "@PACKAGE_STAGE"+"/"+result[0].target
 
 def create_dag(
+        session: Session,
         project_name: str, 
         dag_name: str,
         schedule: str,
-        tasks: list
+        tasks: list,
+        imports: list = [],
     ) -> DAG:
 
     with DAG(
@@ -224,25 +283,26 @@ def create_dag(
         warehouse=WAREHOUSE, 
         stage_location=JOB_STAGE,
         packages=["snowflake-ml-python","snowflake-snowpark-python"],
+        imports=imports,
     ) as dag:
         task_ref = {}
         for t in tasks:
-            config = _validate_config(t)
             task_func = _get_task_definition(
                 session=session,
-                file=config['file'],
+                file=t['file'],
                 project_name=project_name,
-                return_from_tasks=config["dep"],
+                mljob=t["mljob"],
+                return_from_tasks=t["dep"],
             )
             task = DAGTask(
-                name=config["name"],
+                name=t["name"],
                 definition=task_func,
-                is_finalizer=config["final"],
+                is_finalizer=t["final"],
             )
-            if config["dep"]:
-                for d in config["dep"]:
+            if t["dep"]:
+                for d in t["dep"]:
                     task_ref[d] >> task
-            task_ref[config["name"]] = task
+            task_ref[t["name"]] = task
     return dag
 
 if __name__ == "__main__":
@@ -269,7 +329,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     config = load_config(args.project_name)
-    dags = config['deploy']['DAGS']
+    dags = _validate_dags(config['deploy']['DAGS'])
 
     session = Session.builder.config("connection_name",CONNECTION).getOrCreate()
     # session level query tags?
@@ -288,11 +348,15 @@ if __name__ == "__main__":
 
     deployed_dags = []
     for d in dags:
+        imports = [_stage_zip(session, args.project_name)] if d["import_zip"] else []
+        print(imports)
         dag = create_dag(
+            session=session,
             project_name=args.project_name,
             dag_name=d["name"],
             schedule=d["schedule"],
             tasks=d["tasks"],
+            imports=imports
         )
         dag_op.deploy(dag, mode=CreateMode.or_replace)
         deployed_dags.append(dag)

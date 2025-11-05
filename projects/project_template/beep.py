@@ -1,14 +1,9 @@
 # %%
-import argparse
+import sys
 
-parser = argparse.ArgumentParser("test")
 
-parser.add_argument(
-    "--woo",
-)
-args = parser.parse_args()
 
-__return__ = {args.woo:"beep"}
+__return__ = {sys.argv[1]:"beep"}
 # %%
 
 

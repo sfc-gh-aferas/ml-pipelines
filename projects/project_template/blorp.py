@@ -1,1 +1,2 @@
-print("okiedokie")
+def main():
+    print("okiedokie")
