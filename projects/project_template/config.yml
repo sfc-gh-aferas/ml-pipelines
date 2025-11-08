@@ -8,20 +8,19 @@ deploy:
         - name: training
           file: training.py
           mljob: True
-        - name: beep
-          file: beep.py
+        - name: promote_model
+          file: promote_model.py
           dep: training
-          mljob: True
-        - name: boop
-          file: boop.py
+        - name: create_monitor
+          file: create_monitor.py
           dep: training
         - name: inference
           file: inference.ipynb
           dep: 
-            - beep
-            - boop  
-        - name: final
-          file: blorp.py
+            - promote_model
+            - create_monitor  
+        - name: cleanup
+          file: cleanup.py
           final: True 
       schedule: 
 

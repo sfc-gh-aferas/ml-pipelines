@@ -30,7 +30,7 @@ mv = reg.log_model(model=lr, model_name="TESTMODEL", sample_input_data=x)
 # %%
 reg.show_models()
 """
-__return__ = {"woo":"hoo"}
+__return__ = {"version_name":"v1"}
 # %%
 
 

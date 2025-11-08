@@ -198,17 +198,15 @@ def _get_return_vals(task_context: TaskContext, return_from_tasks: list, script_
     Note:
         TODO: Add validation for return value format and task existence
     """
-    if script_args:
-        # Format as command-line arguments: ['--key1', 'value1', '--key2', 'value2']
-        kw = []
-        for task in return_from_tasks:
-            val = json.loads(task_context.get_predecessor_return_value(task).replace("'",'"'))
-            kw += [i for k,v in val.items() for i in ("--"+str(k),str(v))]
-    else:
-        # Format as dictionary: {'key1': 'value1', 'key2': 'value2'}
-        kw = {}
-        for task in return_from_tasks:
-            kw.update(json.loads(task_context.get_predecessor_return_value(task).replace("'",'"')))
+    kw = [] if script_args else {}
+    for task in return_from_tasks:
+        result = task_context.get_predecessor_return_value(task).replace("'",'"')
+        if result:
+            val = json.loads(result)
+            if script_args:
+                kw += [i for k,v in val.items() for i in ("--"+str(k),str(v))]
+            else:
+                kw.update(val)         
     return kw
 
 def _get_notebook_runner(fully_qualified_name: str, return_from_tasks: list = []) -> Callable:
@@ -229,7 +227,7 @@ def _get_notebook_runner(fully_qualified_name: str, return_from_tasks: list = []
         ctx = TaskContext(session)
         # Get parameters from predecessor tasks and format as SQL arguments
         params = _get_return_vals(task_context=ctx, return_from_tasks=return_from_tasks, script_args=True)
-        params = "'"+"','".join(params)+"'"
+        params = "'"+"','".join(params)+"'" if params else ""
         return session.sql(f"EXECUTE NOTEBOOK {fully_qualified_name}({params});").collect()
         
     return nb_func
@@ -268,7 +266,8 @@ def _get_mljob_runner(filename: str, project_name: str, return_from_tasks: list 
             imports=["@PACKAGE_STAGE/dist"]  # Include january_ml package
         )
         # Store and return job results for downstream tasks
-        ctx.set_return_value(job.result())
+        results = job.result() if job.result() else ""
+        ctx.set_return_value(results)
         return job.result()
 
     return job_func
@@ -299,6 +298,7 @@ def _get_func_runner(filename: str, return_from_tasks: list = []) -> Callable:
         results = module.main(**params)
         
         # Store results for downstream tasks
+        results = results if results else ""
         ctx.set_return_value(results)
         return results
 
