@@ -6,14 +6,17 @@ from snowflake.ml.feature_store import FeatureView
 from snowflake.snowpark import DataFrame
 
 def load_config(project_name: str) -> dict:
-    if "config.yml" in os.listdir(os.getcwd()):
+    subdirs = os.listdir(os.getcwd())
+    if "config.yml" in subdirs:
         config_dir = ""
-    elif project_name in os.listdir(os.getcwd()):
+    elif project_name in subdirs:
         config_dir = f"{project_name}/"
-    elif "projects" in os.listdir(os.getcwd()):
+    elif "projects" in subdirs:
         config_dir = f"projects/{project_name}/"
+    elif "home" in subdirs:
+        config_dir = f"/home/udf/{os.listdir('home/udf')[0]}/"
     else:
-        raise ValueError("Config file not findable from current working directory:", os.getcwd())
+        raise ValueError("Configuration file not findable from current working directory:", os.getcwd(), subdirs)
     
     config = yaml.safe_load(open(config_dir+"config.yml",'r'))
     if config["project_name"] == project_name:

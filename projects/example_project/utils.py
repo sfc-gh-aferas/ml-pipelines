@@ -1,5 +1,6 @@
 from snowflake.snowpark import Session
 import numpy as np
+import pandas as pd
 
 def get_stage_packages():
     session = Session.builder.getOrCreate()
@@ -7,6 +8,6 @@ def get_stage_packages():
 
 def get_data(n_samples, n_features):
     rand = np.random.default_rng(42)
-    x = rand.random(size=(n_samples, n_features))
-    y = rand.random(size=n_samples)
-    return x,y
+    data = rand.random(size=(n_samples, n_features+1))
+    df = pd.DataFrame(data, columns=["input_feature_"+str(i) for i in range(n_features)]+["y"])
+    return df

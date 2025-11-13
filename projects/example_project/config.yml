@@ -1,0 +1,36 @@
+# will need to have all elements needed to set up
+project_name: example_project
+
+deploy:
+  DAGS:
+    #- name: EXAMPLE1
+    #  tasks:
+    #    - name: training
+    #      file: training.ipynb
+    #  schedule: 
+    #- name: EXAMPLE2
+    #  tasks:
+    #    - name: inference
+    #      file: inference.py
+    #      mljob: True
+    #  schedule: 
+    - name: EXAMPLE3
+      tasks:
+        - name: prepare
+          file: prepare_data.py
+        - name: train
+          file: training.py
+          mljob: True
+          dep: prepare
+        - name: promote
+          file: promote_model.py
+          dep: train
+      schedule:
+
+N_FEATURES: 5
+N_SAMPLES_TRAIN: 1000
+N_SAMPLES_INFER: 100
+
+TRAIN_DATA_NAME: TRAIN_DATASET
+MODEL_NAME: TEST_MODEL
+PRED_TABLE: TEST_MODEL_PREDICTIONS

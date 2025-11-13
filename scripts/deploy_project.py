@@ -18,16 +18,15 @@ Environment:
     Requires Snowflake connection configuration via january_ml.constants module.
 """
 
-from january_ml.utils import load_config
+from january_ml.utils import load_config, version_data
 import os
+import sys
 import json
 import time
-import shutil
 import importlib
 from typing import Union
 from collections.abc import Callable
 from snowflake.snowpark.session import Session
-from snowflake.snowpark.stored_procedure import StoredProcedureRegistration
 from snowflake.core import CreateMode, Root
 from snowflake.ml.jobs import submit_from_stage
 from snowflake.core.task.dagv1 import DAG, DAGTask, DAGOperation
@@ -39,10 +38,12 @@ from january_ml.constants import (
     ROLE_NAME,
     WAREHOUSE,
     COMPUTE_POOL,
-    GIT_STAGE,
+    #GIT_STAGE,
+    BUILD_STAGE,
     JOB_STAGE,
     # BRANCH,
 )
+
 def _wait_for_run_to_complete(session: Session, dag: DAG) -> str:
     """
     Wait for a DAG run to complete and return the final status.
@@ -111,30 +112,37 @@ def stage_directory(session: Session, project_dir: str):
     """
     Upload project files and dependencies to Snowflake stages.
     
-    Creates or replaces three Snowflake stages (GIT_STAGE, JOB_STAGE, PACKAGE_STAGE)
+    Creates two Snowflake stages (BUILD_STAGE, JOB_STAGE)
     and uploads all files from the project directory along with the january_ml package.
-    
-    Note: This is a temporary approach used for testing. In production, this may
-    be replaced with direct Git repository integration.
     
     Args:
         session (Session): Active Snowflake session
         project_dir (str): Name of the project subdirectory under 'projects/'
     """
-    # Create or replace staging areas for code and dependencies
-    session.sql(f"CREATE OR REPLACE STAGE {GIT_STAGE}").collect()
-    session.sql(f"CREATE OR REPLACE STAGE {JOB_STAGE}").collect()
-    session.sql(f"CREATE OR REPLACE STAGE PACKAGE_STAGE").collect()
+    # Create stages and remove previous project files
+    session.sql(f"CREATE STAGE IF NOT EXISTS {BUILD_STAGE}").collect()
+    session.sql(f"REMOVE @{BUILD_STAGE}/{project_dir}").collect()
+    session.sql(f"CREATE STAGE IF NOT EXISTS {JOB_STAGE}").collect()
+    session.sql(f"REMOVE @{JOB_STAGE}/{project_dir}").collect()
 
     # Upload all non-directory files from the project directory
-    for f in os.listdir("projects/"+project_dir):
-        filename = "projects/"+project_dir+"/"+f
+    staged_files = []
+    for f in os.listdir(f"projects/{project_dir}"):
+        filename = f"projects/{project_dir}/{f}"
         if not os.path.isdir(filename):
-            session.file.put(filename,GIT_STAGE+"/"+project_dir,overwrite=True, auto_compress=False)
+            result = session.file.put(filename,f"{BUILD_STAGE}/{project_dir}",overwrite=True, auto_compress=False)
+            staged_files.append(f"@{BUILD_STAGE}/{project_dir}/{result[0].target}")
     
     # Upload the january_ml package wheel file
-    session.file.put('dist/january_ml-0.0.1-py3-none-any.whl',"PACKAGE_STAGE/dist", overwrite=True, auto_compress=False)
-    print(f"{project_dir} uploaded to {GIT_STAGE}")
+    result = session.file.put(
+        "dist/january_ml-0.0.1-py3-none-any.whl",
+        f"{BUILD_STAGE}/{project_dir}/dist", 
+        overwrite=True, 
+        auto_compress=False
+    )
+    staged_files.append(f"@{BUILD_STAGE}/{project_dir}/dist/{result[0].target}")
+    print(f"{project_dir} uploaded to {BUILD_STAGE}")
+    return staged_files
 
 def _deploy_notebook(session: Session, notebook_file: str, project_name: str) -> str:
     """
@@ -163,7 +171,7 @@ def _deploy_notebook(session: Session, notebook_file: str, project_name: str) ->
     # Create notebook with runtime configuration
     nb_sql = f"""
         CREATE OR REPLACE NOTEBOOK {fully_qualified_name}
-        FROM @{GIT_STAGE}/{project_name}
+        FROM @{BUILD_STAGE}/{project_name}
         MAIN_FILE = '{notebook_file}'
         QUERY_WAREHOUSE = {WAREHOUSE}
         RUNTIME_NAME = 'SYSTEM$BASIC_RUNTIME'
@@ -254,7 +262,7 @@ def _get_mljob_runner(filename: str, project_name: str, return_from_tasks: list 
         params = _get_return_vals(task_context=ctx, return_from_tasks=return_from_tasks, script_args=True)
             
         # Submit Python script as ML job with dependencies
-        stage_path = f"@{GIT_STAGE}/{project_name}"
+        stage_path = f"@{BUILD_STAGE}/{project_name}"
         job = submit_from_stage(
             source=stage_path,
             compute_pool=COMPUTE_POOL,
@@ -263,7 +271,7 @@ def _get_mljob_runner(filename: str, project_name: str, return_from_tasks: list 
             session=session,
             args=params,
             pip_requirements=["-r ../app/project-requirements.txt"],
-            imports=["@PACKAGE_STAGE/dist"]  # Include january_ml package
+            imports=[f"@{BUILD_STAGE}/{project_name}/dist"]  # Include january_ml package
         )
         # Store and return job results for downstream tasks
         results = job.result() if job.result() else ""
@@ -288,6 +296,10 @@ def _get_func_runner(filename: str, return_from_tasks: list = []) -> Callable:
         Callable: Function that imports and runs the module when called with a session
     """
     def func(session: Session) -> str:
+        import_dir = sys._xoptions.get("snowflake_import_directory")
+        # Add the name of the wheel file to the system path
+        sys.path.append(import_dir + 'january_ml-0.0.1-py3-none-any.whl')
+
         ctx = TaskContext(session)
         # Get parameters as dictionary for **kwargs
         params = _get_return_vals(task_context=ctx, return_from_tasks=return_from_tasks)
@@ -295,8 +307,8 @@ def _get_func_runner(filename: str, return_from_tasks: list = []) -> Callable:
         # Dynamically import and execute the module's main function
         mod_name = os.path.splitext(filename)[0]
         module = importlib.import_module(mod_name)
-        results = module.main(**params)
-        
+        results = module.main(session=session, **params)
+
         # Store results for downstream tasks
         results = results if results else ""
         ctx.set_return_value(results)
@@ -369,8 +381,7 @@ def _validate_dags(dags: list[dict]) -> list[dict]:
     Validate and normalize DAG configuration from project config file.
     
     Processes DAG configuration dictionaries to ensure required fields exist,
-    normalize field types, and set appropriate defaults. Determines if the DAG
-    needs project directory imported as a zip (for non-mljob Python tasks).
+    normalize field types, and set appropriate defaults.
     
     Args:
         dags (list[dict]): List of DAG configurations from config file
@@ -380,7 +391,6 @@ def _validate_dags(dags: list[dict]) -> list[dict]:
             - name (str): DAG name
             - schedule (str): Cron schedule or interval
             - tasks (list): List of validated task configurations
-            - import_zip (bool): Whether to import project directory as zip
     
     Raises:
         ValueError: If 'final' or 'mljob' fields are not boolean
@@ -391,7 +401,6 @@ def _validate_dags(dags: list[dict]) -> list[dict]:
             name=dag_config["name"],
             schedule=dag_config["schedule"],
             tasks=[],
-            import_zip=False  # Set to True if any task needs direct Python execution
         )
         
         for task_config in dag_config["tasks"]:
@@ -414,40 +423,10 @@ def _validate_dags(dags: list[dict]) -> list[dict]:
             if not isinstance(valid_dict["mljob"],bool):
                 raise ValueError("Config 'mljob' must be True or False")
             
-            # Non-mljob Python tasks need the project directory as a zip import
-            if (os.path.splitext(valid_dict["file"])[1] == ".py") & (not valid_dict["mljob"]):
-                valid_dag["import_zip"] = True
-            
             valid_dag["tasks"].append(valid_dict)
         valid_list.append(valid_dag)
     
     return valid_list
-
-def _stage_zip(session: Session, project_name: str) -> str:
-    """
-    Create a zip archive of the project directory and upload to Snowflake stage.
-    
-    Packages the entire project directory into a zip file and uploads it to
-    PACKAGE_STAGE. This is used for non-mljob Python tasks that need access
-    to the full project structure during execution.
-    
-    Args:
-        session (Session): Active Snowflake session
-        project_name (str): Project directory name under 'projects/'
-    
-    Returns:
-        str: Stage path to the uploaded zip file (e.g., '@PACKAGE_STAGE/directory.zip')
-    """
-    # Create zip archive of project directory
-    zipfile = shutil.make_archive("directory",'zip',f"projects/{project_name}")
-    
-    # Upload to Snowflake stage
-    result = session.file.put(zipfile,"PACKAGE_STAGE",overwrite=True)
-    
-    # Clean up local zip file
-    os.remove(zipfile)
-    
-    return "@PACKAGE_STAGE"+"/"+result[0].target
 
 def create_dag(
         session: Session,
@@ -470,7 +449,7 @@ def create_dag(
         dag_name (str): Name for the DAG (must be unique within schema)
         schedule (str): Cron expression or interval (e.g., '0 0 * * *', '1 HOUR')
         tasks (list): List of task configurations with 'name', 'file', 'dep', 'final', 'mljob'
-        imports (list): Additional stage paths to import (e.g., zipped project directories)
+        imports (list): Additional stage paths to import (e.g., project py files, package wheel)
     
     Returns:
         DAG: Configured Snowflake DAG object ready for deployment
@@ -547,8 +526,7 @@ if __name__ == "__main__":
     session.use_schema(SCHEMA_NAME)
 
     # Upload project files and dependencies to Snowflake stages
-    # TODO: Replace with Git integration for production deployments
-    stage_directory(session, args.project_name)
+    staged_files = stage_directory(session, args.project_name)
 
     # Initialize Snowflake API objects for DAG operations
     api_root = Root(session)
@@ -559,9 +537,6 @@ if __name__ == "__main__":
     # Deploy each DAG defined in the project configuration
     deployed_dags = []
     for d in dags:
-        # Create and upload project zip if needed for non-mljob Python tasks
-        imports = [_stage_zip(session, args.project_name)] if d["import_zip"] else []
-        print(imports)
         
         # Create DAG with all configured tasks and dependencies
         dag = create_dag(
@@ -570,7 +545,7 @@ if __name__ == "__main__":
             dag_name=d["name"],
             schedule=d["schedule"],
             tasks=d["tasks"],
-            imports=imports
+            imports=staged_files
         )
         
         # Deploy to Snowflake (replaces existing DAG with same name)
