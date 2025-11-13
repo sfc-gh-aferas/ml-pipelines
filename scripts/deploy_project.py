@@ -270,7 +270,7 @@ def _get_mljob_runner(filename: str, project_name: str, return_from_tasks: list 
             stage_name=JOB_STAGE,
             session=session,
             args=params,
-            pip_requirements=["-r ../app/project-requirements.txt"],
+            pip_requirements=["-r ../app/pip-requirements.txt"],
             imports=[f"@{BUILD_STAGE}/{project_name}/dist"]  # Include january_ml package
         )
         # Store and return job results for downstream tasks
@@ -399,8 +399,9 @@ def _validate_dags(dags: list[dict]) -> list[dict]:
     for dag_config in dags:
         valid_dag = dict(
             name=dag_config["name"],
-            schedule=dag_config["schedule"],
+            schedule=dag_config.get("schedule",None),
             tasks=[],
+            conda_packages=dag_config.get("conda_packages",[])
         )
         
         for task_config in dag_config["tasks"]:
@@ -435,6 +436,7 @@ def create_dag(
         schedule: str,
         tasks: list,
         imports: list = [],
+        packages: list = [],
     ) -> DAG:
     """
     Create and configure a Snowflake DAG with tasks and dependencies.
@@ -459,7 +461,7 @@ def create_dag(
         schedule=schedule, 
         warehouse=WAREHOUSE, 
         stage_location=JOB_STAGE,
-        packages=["snowflake-ml-python","snowflake-snowpark-python"],
+        packages=packages,
         imports=imports,
     ) as dag:
         task_ref = {}  # Track created tasks for dependency resolution
@@ -545,7 +547,8 @@ if __name__ == "__main__":
             dag_name=d["name"],
             schedule=d["schedule"],
             tasks=d["tasks"],
-            imports=staged_files
+            imports=staged_files,
+            packages=["snowflake-snowpark-python","snowflake-ml-python"]+d["conda_packages"],
         )
         
         # Deploy to Snowflake (replaces existing DAG with same name)

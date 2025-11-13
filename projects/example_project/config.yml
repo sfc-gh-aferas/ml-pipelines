@@ -3,17 +3,17 @@ project_name: example_project
 
 deploy:
   DAGS:
-    #- name: EXAMPLE1
-    #  tasks:
-    #    - name: training
-    #      file: training.ipynb
-    #  schedule: 
-    #- name: EXAMPLE2
-    #  tasks:
-    #    - name: inference
-    #      file: inference.py
-    #      mljob: True
-    #  schedule: 
+    - name: EXAMPLE1
+      tasks:
+        - name: training
+          file: training.ipynb
+      schedule: 
+    - name: EXAMPLE2
+      tasks:
+        - name: inference
+          file: inference.py
+          mljob: True
+      schedule: 
     - name: EXAMPLE3
       tasks:
         - name: prepare
@@ -26,6 +26,9 @@ deploy:
           file: promote_model.py
           dep: train
       schedule:
+      #conda_packages:
+      #  - snowflake-snowpark-python
+      #  - snowflake-ml-python
 
 N_FEATURES: 5
 N_SAMPLES_TRAIN: 1000
