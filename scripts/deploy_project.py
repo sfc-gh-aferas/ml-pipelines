@@ -18,26 +18,29 @@ Environment:
     Requires Snowflake connection configuration via january_ml.constants module.
 """
 
-from january_ml.utils import load_config, version_data
+from january_ml.utils import load_config
 import os
 import sys
 import json
 import time
 import importlib
+import re
+from datetime import timedelta
 from typing import Union
 from collections.abc import Callable
+from typing import Union
 from snowflake.snowpark.session import Session
 from snowflake.core import CreateMode, Root
 from snowflake.ml.jobs import submit_from_stage
 from snowflake.core.task.dagv1 import DAG, DAGTask, DAGOperation
 from snowflake.core.task.context import TaskContext
+from snowflake.core.task import Cron
 from january_ml.constants import (
     CONNECTION,
     DB_NAME,
     SCHEMA_NAME,
     ROLE_NAME,
-    WAREHOUSE,
-    COMPUTE_POOL,
+    ENVIRONMENT,
     #GIT_STAGE,
     BUILD_STAGE,
     JOB_STAGE,
@@ -376,6 +379,19 @@ def _get_task_definition(
     
     return task_func
 
+def _validate_schedule(schedule: str) -> Union[timedelta, Cron]:
+
+    if schedule:
+        sched_list = schedule.upper().split(" ")
+        if sched_list[0]=="CRON":
+            return Cron(" ".join(sched_list[1:-1]), sched_list[-1])
+        elif sched_list[-1] in ["HOURS","MINUTES","SECONDS"]:
+            return timedelta(**{sched_list[-1].lower():int(sched_list[0])})
+        else:
+            raise ValueError(f"Schedule {schedule} is not a valid value. Must be CRON value or HOURS, MINUTES, or SECONDS.")
+    else:
+        return schedule
+
 def _validate_dags(dags: list[dict]) -> list[dict]:
     """
     Validate and normalize DAG configuration from project config file.
@@ -403,6 +419,8 @@ def _validate_dags(dags: list[dict]) -> list[dict]:
             tasks=[],
             conda_packages=dag_config.get("conda_packages",[])
         )
+
+        valid_dag["schedule"] = _validate_schedule(valid_dag["schedule"]) 
         
         for task_config in dag_config["tasks"]:
             # Extract and normalize task configuration
@@ -457,7 +475,7 @@ def create_dag(
         DAG: Configured Snowflake DAG object ready for deployment
     """
     with DAG(
-        name=dag_name,
+        name=f"{project_name}_{dag_name}",
         schedule=schedule, 
         warehouse=WAREHOUSE, 
         stage_location=JOB_STAGE,
@@ -493,6 +511,26 @@ def create_dag(
     
     return dag
 
+def _create_compute_resources(session: Session, project_name: str) -> None:
+
+    project_name = re.sub(r"[^A-Z]","_", project_name.upper())
+
+    global WAREHOUSE
+    WAREHOUSE = f"{project_name}_{ENVIRONMENT}_WH"
+    session.sql(f"""
+        CREATE WAREHOUSE IF NOT EXISTS {WAREHOUSE}
+            WAREHOUSE_SIZE = SMALL;
+    """).collect()
+
+    global COMPUTE_POOL
+    COMPUTE_POOL = f"{project_name}_{ENVIRONMENT}_COMPUTE"
+    session.sql(f"""
+        CREATE COMPUTE POOL IF NOT EXISTS {COMPUTE_POOL}
+            MIN_NODES = 1
+            MAX_NODES = 1
+            INSTANCE_FAMILY = CPU_X64_M
+    """).collect()
+
 if __name__ == "__main__":
 
     import argparse
@@ -523,9 +561,11 @@ if __name__ == "__main__":
     # Initialize Snowflake session with configured connection
     session = Session.builder.config("connection_name",CONNECTION).getOrCreate()
     session.use_role(ROLE_NAME)
-    session.use_warehouse(WAREHOUSE)
     session.use_database(DB_NAME)
     session.use_schema(SCHEMA_NAME)
+
+    _create_compute_resources(session, args.project_name)
+    session.use_warehouse(WAREHOUSE)
 
     # Upload project files and dependencies to Snowflake stages
     staged_files = stage_directory(session, args.project_name)
@@ -550,7 +590,7 @@ if __name__ == "__main__":
             imports=staged_files,
             packages=["snowflake-snowpark-python","snowflake-ml-python"]+d["conda_packages"],
         )
-        
+
         # Deploy to Snowflake (replaces existing DAG with same name)
         dag_op.deploy(dag, mode=CreateMode.or_replace)
         deployed_dags.append(dag)

@@ -7,24 +7,24 @@ deploy:
       tasks:
         - name: training
           file: training.ipynb
-      schedule: 
+      schedule: CRON 30 3 * * * UTC
     - name: EXAMPLE2
       tasks:
         - name: inference
           file: inference.py
           mljob: True
-      schedule: 
-    - name: EXAMPLE3
-      tasks:
-        - name: prepare
-          file: prepare_data.py
-        - name: train
-          file: training.py
-          mljob: True
-          dep: prepare
-        - name: promote
-          file: promote_model.py
-          dep: train
+      schedule: 3 HOURS
+    #- name: EXAMPLE3
+    #  tasks:
+    #    - name: prepare
+    #      file: prepare_data.py
+    #    - name: train
+    #      file: training.py
+    #      mljob: True
+    #      dep: prepare
+    #    - name: promote
+    #      file: promote_model.py
+    #      dep: train
       schedule:
       #conda_packages:
       #  - snowflake-snowpark-python
