@@ -1,0 +1,22 @@
+# To be defined
+project_name: time_of_day_clustering
+
+deploy:
+  DAGS:
+    - name: Training
+      tasks:
+        - name: training
+          file: training.py
+      schedule: 
+    - name: Inference
+      tasks:
+        - name: inference
+          file: inference.py
+          mljob: True
+        - name: MAB
+          file: MAB.sql
+          dep: inference
+      schedule:
+      #conda_packages:
+      #  - snowflake-snowpark-python
+      #  - snowflake-ml-python
