@@ -14,26 +14,18 @@ deploy:
           file: inference.py
           mljob: True
       schedule: 3 HOURS
-    #- name: EXAMPLE3
-    #  tasks:
-    #    - name: prepare
-    #      file: prepare_data.py
-    #    - name: train
-    #      file: training.py
-    #      mljob: True
-    #      dep: prepare
-    #    - name: promote
-    #      file: promote_model.py
-    #      dep: train
+    - name: EXAMPLE3
+      tasks:
+        - name: prepare
+          file: prepare_data.py
+        - name: train
+          file: training.py
+          mljob: True
+          dep: prepare
+        - name: promote
+          file: promote_model.py
+          dep: train
       schedule:
       #conda_packages:
       #  - snowflake-snowpark-python
       #  - snowflake-ml-python
-
-N_FEATURES: 5
-N_SAMPLES_TRAIN: 1000
-N_SAMPLES_INFER: 100
-
-TRAIN_DATA_NAME: TRAIN_DATASET
-MODEL_NAME: TEST_MODEL
-PRED_TABLE: TEST_MODEL_PREDICTIONS

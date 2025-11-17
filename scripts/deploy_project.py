@@ -17,14 +17,13 @@ Usage:
 Environment:
     Requires Snowflake connection configuration via january_ml.constants module.
 """
-
-from january_ml.utils import load_config
 import os
 import sys
 import json
 import time
 import importlib
 import re
+import yaml
 from datetime import timedelta
 from typing import Union
 from collections.abc import Callable
@@ -555,7 +554,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Load and validate project configuration
-    config = load_config(args.project_name)
+    config = yaml.safe_load(open(f"projects/{args.project_name}/config.yml","r"))
     dags = _validate_dags(config['deploy']['DAGS'])
 
     # Initialize Snowflake session with configured connection

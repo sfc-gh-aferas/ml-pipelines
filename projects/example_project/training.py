@@ -1,5 +1,3 @@
-from january_ml.utils import load_config
-
 from sklearn.linear_model import LinearRegression
 
 from snowflake.snowpark.session import Session
@@ -8,11 +6,9 @@ from snowflake.ml.dataset import Dataset
 
 from argparse import ArgumentParser
 
-config = load_config('example_project')
-
 def main(session: Session, version: str) -> dict:
 
-    ds_name = config["TRAIN_DATA_NAME"]
+    ds_name = "TRAIN_DATASET"
     ds = Dataset.create(session=session, name=ds_name, exist_ok=True)
     sdf = ds.select_version(version).read.to_snowpark_dataframe()
     df = sdf.to_pandas()
@@ -28,7 +24,7 @@ def main(session: Session, version: str) -> dict:
     # Register model
     reg = Registry(session=session)
 
-    model_name = config["MODEL_NAME"]
+    model_name = "TEST_MODEL"
     mv = reg.log_model(
         model=lr, 
         model_name=model_name, 
