@@ -1,0 +1,11 @@
+entities:
+  - name: example_entity
+    join_keys: 
+      - BORROWERCOMM_UUID
+
+feature_views:
+  - name: example_features
+    function: create_example_features
+    entities: example_entity
+    timestamp_col: CREATED_AT
+    #refresh_freq: 1 day

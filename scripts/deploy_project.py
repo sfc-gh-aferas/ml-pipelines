@@ -110,16 +110,20 @@ def _wait_for_run_to_complete(session: Session, dag: DAG) -> str:
 
     return dag_result
 
-def stage_directory(session: Session, project_dir: str):
+def stage_directory(session: Session, project_dir: str) -> list[str]:
     """
     Upload project files and dependencies to Snowflake stages.
     
-    Creates two Snowflake stages (BUILD_STAGE, JOB_STAGE)
-    and uploads all files from the project directory along with the january_ml package.
+    Creates two Snowflake stages (BUILD_STAGE, JOB_STAGE) if they don't exist,
+    removes any previous project files from these stages, and uploads all files
+    from the project directory along with the january_ml package wheel.
     
     Args:
         session (Session): Active Snowflake session
         project_dir (str): Name of the project subdirectory under 'projects/'
+    
+    Returns:
+        list[str]: List of stage paths for all uploaded files (e.g., '@BUILD_STAGE/project/file.py')
     """
     # Create stages and remove previous project files
     session.sql(f"CREATE STAGE IF NOT EXISTS {BUILD_STAGE}").collect()
@@ -150,9 +154,9 @@ def _deploy_notebook(session: Session, notebook_file: str, project_name: str) ->
     """
     Deploy a Jupyter notebook to Snowflake as a Snowflake Notebook.
     
-    Creates a Snowflake Notebook from a .ipynb file in the staging area with
-    configured runtime, warehouse, and compute pool. Activates a live version
-    of the notebook for execution.
+    Creates a Snowflake Notebook from a .ipynb file in BUILD_STAGE with configured
+    runtime, warehouse, and compute pool. Activates a live version for execution.
+    Uses dynamically created WAREHOUSE and COMPUTE_POOL global variables.
     
     Args:
         session (Session): Active Snowflake session
@@ -165,6 +169,7 @@ def _deploy_notebook(session: Session, notebook_file: str, project_name: str) ->
     Note:
         TODO: Add support for Git branch-based deployment
         TODO: Make compute pool selection configurable per notebook
+        TODO: Add error handling logic for notebook creation failures
     """
     # Create fully qualified notebook name with project namespace
     notebook_name = notebook_file.replace(".ipynb","")
@@ -196,6 +201,7 @@ def _get_return_vals(task_context: TaskContext, return_from_tasks: list, script_
     
     Extracts return values from specified predecessor tasks and formats them
     either as command-line arguments (for scripts) or as a dictionary (for functions).
+    Handles empty or None results gracefully by skipping them.
     
     Args:
         task_context (TaskContext): Current task execution context
@@ -203,7 +209,8 @@ def _get_return_vals(task_context: TaskContext, return_from_tasks: list, script_
         script_args (bool): If True, format as CLI args (--key value); if False, return as dict
     
     Returns:
-        Union[list, dict]: Either a list of CLI arguments or a merged dictionary of values
+        Union[list, dict]: Either a list of CLI arguments ['--key1', 'val1', '--key2', 'val2']
+                          or a merged dictionary {'key1': 'val1', 'key2': 'val2'}
     
     Note:
         TODO: Add validation for return value format and task existence
@@ -225,6 +232,7 @@ def _get_notebook_runner(fully_qualified_name: str, return_from_tasks: list = []
     
     Returns a callable function that can be used as a DAG task definition.
     The function executes the notebook with parameters from predecessor tasks.
+    Handles cases where no parameters are provided (executes with empty params).
     
     Args:
         fully_qualified_name (str): Full notebook name (DB.SCHEMA.NOTEBOOK_NAME)
@@ -246,9 +254,10 @@ def _get_mljob_runner(filename: str, project_name: str, return_from_tasks: list 
     """
     Create a task function that submits and runs a Python script as a Snowflake ML Job.
     
-    Returns a callable that submits a Python script from stage as a Snowflake ML Job
-    with dependencies and parameters from predecessor tasks. The job runs on a
-    Snowflake compute pool with isolated container execution.
+    Returns a callable that submits a Python script from BUILD_STAGE as a Snowflake ML Job
+    with dependencies and parameters from predecessor tasks. The job runs on the dynamically
+    created COMPUTE_POOL with isolated container execution. Includes pip requirements from
+    the project's pip-requirements.txt and the january_ml package wheel.
     
     Args:
         filename (str): Python script filename to execute (e.g., 'training.py')
@@ -288,7 +297,8 @@ def _get_func_runner(filename: str, return_from_tasks: list = []) -> Callable:
     
     Returns a callable that imports and runs a Python module's main() function
     with parameters from predecessor tasks. Used for lightweight Python tasks
-    that don't require ML Job submission.
+    that don't require ML Job submission. Adds the january_ml wheel to sys.path
+    and passes the Snowflake session to the module's main function.
     
     Args:
         filename (str): Python module filename (e.g., 'utils.py')
@@ -296,6 +306,9 @@ def _get_func_runner(filename: str, return_from_tasks: list = []) -> Callable:
     
     Returns:
         Callable: Function that imports and runs the module when called with a session
+    
+    Note:
+        The module's main() function must accept a 'session' parameter
     """
     def func(session: Session) -> str:
         import_dir = sys._xoptions.get("snowflake_import_directory")
@@ -378,8 +391,24 @@ def _get_task_definition(
     
     return task_func
 
-def _validate_schedule(schedule: str) -> Union[timedelta, Cron]:
-
+def _validate_schedule(schedule: str) -> Union[timedelta, Cron, None]:
+    """
+    Parse and validate a schedule string into a Snowflake-compatible schedule object.
+    
+    Converts schedule strings into either a Cron object or timedelta object for DAG scheduling.
+    Supports two formats:
+    - CRON format: "CRON <cron_expression> <timezone>" (e.g., "CRON 0 9 * * * UTC")
+    - Interval format: "<number> <HOURS|MINUTES|SECONDS>" (e.g., "5 HOURS")
+    
+    Args:
+        schedule (str): Schedule string in CRON or interval format, or None
+    
+    Returns:
+        Union[timedelta, Cron, None]: Parsed schedule object or None if schedule is empty
+    
+    Raises:
+        ValueError: If schedule format is invalid
+    """
     if schedule:
         sched_list = schedule.upper().split(" ")
         if sched_list[0]=="CRON":
@@ -396,7 +425,8 @@ def _validate_dags(dags: list[dict]) -> list[dict]:
     Validate and normalize DAG configuration from project config file.
     
     Processes DAG configuration dictionaries to ensure required fields exist,
-    normalize field types, and set appropriate defaults.
+    normalize field types, set appropriate defaults, and parse schedule strings
+    into Snowflake-compatible schedule objects.
     
     Args:
         dags (list[dict]): List of DAG configurations from config file
@@ -404,11 +434,12 @@ def _validate_dags(dags: list[dict]) -> list[dict]:
     Returns:
         list[dict]: Validated and normalized DAG configurations with structure:
             - name (str): DAG name
-            - schedule (str): Cron schedule or interval
+            - schedule (Union[Cron, timedelta, None]): Parsed schedule object
             - tasks (list): List of validated task configurations
+            - conda_packages (list): Additional Conda packages to install
     
     Raises:
-        ValueError: If 'final' or 'mljob' fields are not boolean
+        ValueError: If 'final' or 'mljob' fields are not boolean, or if schedule format is invalid
     """
     valid_list = []
     for dag_config in dags:
@@ -450,7 +481,7 @@ def create_dag(
         session: Session,
         project_name: str, 
         dag_name: str,
-        schedule: str,
+        schedule: Union[timedelta, Cron, None],
         tasks: list,
         imports: list = [],
         packages: list = [],
@@ -460,15 +491,17 @@ def create_dag(
     
     Constructs a DAG by creating task definitions for each configured task,
     setting up dependencies between tasks, and configuring the DAG with
-    required packages and imports.
+    required packages and imports. The DAG name is prefixed with the project
+    name to ensure uniqueness across projects.
     
     Args:
         session (Session): Active Snowflake session
-        project_name (str): Project name for task resolution
-        dag_name (str): Name for the DAG (must be unique within schema)
-        schedule (str): Cron expression or interval (e.g., '0 0 * * *', '1 HOUR')
+        project_name (str): Project name for task resolution and DAG name prefix
+        dag_name (str): Base name for the DAG (will be prefixed with project_name)
+        schedule (Union[timedelta, Cron, None]): Schedule object from _validate_schedule
         tasks (list): List of task configurations with 'name', 'file', 'dep', 'final', 'mljob'
-        imports (list): Additional stage paths to import (e.g., project py files, package wheel)
+        imports (list): Stage paths for all project files and dependencies
+        packages (list): Conda/pip packages to install in DAG environment
     
     Returns:
         DAG: Configured Snowflake DAG object ready for deployment
@@ -511,8 +544,25 @@ def create_dag(
     return dag
 
 def _create_compute_resources(session: Session, project_name: str) -> None:
-
-    project_name = re.sub(r"[^A-Z]","_", project_name.upper())
+    """
+    Create project-specific compute resources (warehouse and compute pool).
+    
+    Dynamically creates a Snowflake warehouse and compute pool for the project,
+    setting global variables WAREHOUSE and COMPUTE_POOL for use by deployment
+    functions. Resource names are prefixed with the sanitized project name and
+    environment to ensure isolation between projects and environments.
+    
+    Args:
+        session (Session): Active Snowflake session
+        project_name (str): Project name (will be sanitized for Snowflake identifiers)
+    
+    Side Effects:
+        Sets global variables WAREHOUSE and COMPUTE_POOL
+    
+    Note:
+        Non-alphanumeric characters in project_name are replaced with underscores
+    """
+    project_name = re.sub(r"[^A-Z0-9]","_", project_name.upper())
 
     global WAREHOUSE
     WAREHOUSE = f"{project_name}_{ENVIRONMENT}_WH"
@@ -553,7 +603,7 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    # Load and validate project configuration
+    # Load project configuration from YAML file and validate DAG definitions
     config = yaml.safe_load(open(f"projects/{args.project_name}/config.yml","r"))
     dags = _validate_dags(config['deploy']['DAGS'])
 
@@ -563,10 +613,11 @@ if __name__ == "__main__":
     session.use_database(DB_NAME)
     session.use_schema(SCHEMA_NAME)
 
+    # Create project-specific warehouse and compute pool (sets global WAREHOUSE and COMPUTE_POOL)
     _create_compute_resources(session, args.project_name)
     session.use_warehouse(WAREHOUSE)
 
-    # Upload project files and dependencies to Snowflake stages
+    # Upload project files and dependencies to BUILD_STAGE and JOB_STAGE
     staged_files = stage_directory(session, args.project_name)
 
     # Initialize Snowflake API objects for DAG operations
@@ -579,14 +630,14 @@ if __name__ == "__main__":
     deployed_dags = []
     for d in dags:
         
-        # Create DAG with all configured tasks and dependencies
+        # Create DAG with all configured tasks, dependencies, and packages
         dag = create_dag(
             session=session,
             project_name=args.project_name,
             dag_name=d["name"],
             schedule=d["schedule"],
             tasks=d["tasks"],
-            imports=staged_files,
+            imports=staged_files,  # All project files and january_ml wheel
             packages=["snowflake-snowpark-python","snowflake-ml-python"]+d["conda_packages"],
         )
 
@@ -594,12 +645,12 @@ if __name__ == "__main__":
         dag_op.deploy(dag, mode=CreateMode.or_replace)
         deployed_dags.append(dag)
     
-    # Optionally execute DAGs immediately for validation/testing
+    # Optionally execute DAGs immediately for validation/testing (CI/CD use)
     if args.run_dag:
         for d in deployed_dags:
             dag_op.run(d)
             result = _wait_for_run_to_complete(session, d)
             if result != "SUCCEEDED":
-                raise Exception(f"DAG failed with result {result}")
+                raise Exception(f"DAG {d.name} failed with result {result}")
 
     session.close()
