@@ -7,9 +7,6 @@ on:
     paths:
       - 'feature_store/**'
       - 'projects/**'
-      - 'january_ml/**'
-      - 'requirements.txt'
-      - 'pyproject.toml'
 
 jobs:
   deploy:
@@ -36,6 +33,21 @@ jobs:
         run: |
           python -m build
           pip install dist/january_ml-*.whl
+
+      - uses: snowflakedb/snowflake-cli-action@v2.0
+        with:
+          default-config-file-path: "config.toml"
+
+        # Use the CLI
+      - name: Execute Snowflake CLI command
+        env:
+          SNOWFLAKE_AUTHENTICATOR: SNOWFLAKE_JWT
+          SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
+          SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+          SNOWFLAKE_PRIVATE_KEY_RAW: ${{ secrets.SNOWFLAKE_PRIVATE_KEY }}
+        run: |
+          snow --help
+          snow connection test -x
 
       - name: Detect changed directories
         id: changes
@@ -67,4 +79,61 @@ jobs:
           
           if [ -z "$changed_projects" ]; then
             echo "ℹ️  No project changes detected"
+          fi
+      - name: Deploy Feature Store
+        if: steps.changes.outputs.feature_store_changed == 'true'
+        env:
+          SNOWFLAKE_CONNECTION: github_actions
+          SNOWFLAKE_ROLE: EXTERNAL_SNOWFLAKE_ARCHITECTS
+          SNOWFLAKE_DATABASE: ML_COLLAB_DEV_DB
+          SNOWFLAKE_SCHEMA: SANDBOX
+          SNOWFLAKE_ENVIRONMENT: DEV
+        run: |
+          echo "🚀 Deploying Feature Store to DEV environment..."
+          python feature_store/setup_feature_store.py
+          echo "✅ Feature Store deployment complete"
+
+      - name: Deploy Changed Projects
+        if: steps.changes.outputs.changed_projects != ''
+        env:
+          SNOWFLAKE_CONNECTION: github_actions
+          SNOWFLAKE_ROLE: EXTERNAL_SNOWFLAKE_ARCHITECTS
+          SNOWFLAKE_DATABASE: ML_COLLAB_DEV_DB
+          SNOWFLAKE_SCHEMA: SANDBOX
+          SNOWFLAKE_ENVIRONMENT: DEV
+        run: |
+          echo "🚀 Deploying changed projects to DEV environment..."
+          
+          # Convert space-separated list to array
+          IFS=' ' read -ra PROJECTS <<< "${{ steps.changes.outputs.changed_projects }}"
+          
+          # Deploy each changed project
+          for project in "${PROJECTS[@]}"; do
+            echo "📦 Deploying project: ${project}"
+            python scripts/deploy_project.py "${project}" --run-dag
+            echo "✅ Project ${project} deployed successfully"
+          done
+          
+          echo "✅ All projects deployed successfully"
+
+      - name: Deployment Summary
+        if: always()
+        run: |
+          echo "## Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:** DEV" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ steps.changes.outputs.feature_store_changed }}" == "true" ]; then
+            echo "- ✅ Feature Store deployed" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- ⏭️  Feature Store (no changes)" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [ -n "${{ steps.changes.outputs.changed_projects }}" ]; then
+            echo "- ✅ Projects deployed: ${{ steps.changes.outputs.changed_projects }}" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- ⏭️  Projects (no changes)" >> $GITHUB_STEP_SUMMARY
           fi
