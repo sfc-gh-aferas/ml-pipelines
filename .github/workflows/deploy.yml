@@ -1,0 +1,70 @@
+name: Deploy to Snowflake
+
+on:
+  push:
+    branches:
+      - '**'  # Trigger on push to any branch
+    paths:
+      - 'feature_store/**'
+      - 'projects/**'
+      - 'january_ml/**'
+      - 'requirements.txt'
+      - 'pyproject.toml'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2  # Fetch previous commit for change detection
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install build
+
+      - name: Build and install january_ml package
+        run: |
+          python -m build
+          pip install dist/january_ml-*.whl
+
+      - name: Detect changed directories
+        id: changes
+        run: |
+          # Check if feature_store directory changed
+          if git diff --name-only HEAD^ HEAD | grep -q '^feature_store/'; then
+            echo "feature_store_changed=true" >> $GITHUB_OUTPUT
+            echo "✅ Feature store changes detected"
+          else
+            echo "feature_store_changed=false" >> $GITHUB_OUTPUT
+            echo "ℹ️  No feature store changes"
+          fi
+          
+          # Detect changed projects and create a space-separated list
+          changed_projects=""
+          for project_dir in projects/*/; do
+            if [ -d "$project_dir" ]; then
+              project_name=$(basename "$project_dir")
+              if git diff --name-only HEAD^ HEAD | grep -q "^projects/${project_name}/"; then
+                changed_projects="${changed_projects}${project_name} "
+                echo "✅ Project changed: ${project_name}"
+              fi
+            fi
+          done
+          
+          # Remove trailing space and save
+          changed_projects=$(echo "$changed_projects" | xargs)
+          echo "changed_projects=${changed_projects}" >> $GITHUB_OUTPUT
+          
+          if [ -z "$changed_projects" ]; then
+            echo "ℹ️  No project changes detected"
+          fi

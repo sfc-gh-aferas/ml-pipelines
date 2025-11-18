@@ -26,6 +26,3 @@ deploy:
           file: promote_model.py
           dep: train
       schedule:
-      #conda_packages:
-      #  - snowflake-snowpark-python
-      #  - snowflake-ml-python
