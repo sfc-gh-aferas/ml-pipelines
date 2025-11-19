@@ -33,7 +33,7 @@ from january_ml.utils import version_featureview
 from january_ml.constants import (
     CONNECTION,
     DB_NAME,
-    SCHEMA_NAME,
+    FEATURE_SCHEMA,
     ROLE_NAME,
     ENVIRONMENT,
 )
@@ -107,7 +107,7 @@ if __name__ == "__main__":
     session = Session.builder.config("connection_name",CONNECTION).getOrCreate()
     session.use_role(ROLE_NAME)
     session.use_database(DB_NAME)
-    session.use_schema(SCHEMA_NAME)
+    session.use_schema(FEATURE_SCHEMA)
 
     # Create dedicated warehouse for feature store operations
     session.sql(f"""
@@ -120,7 +120,7 @@ if __name__ == "__main__":
     fs = FeatureStore(
         session,
         database=DB_NAME,
-        name=SCHEMA_NAME,
+        name=FEATURE_SCHEMA,
         default_warehouse=WAREHOUSE,
         creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
     )

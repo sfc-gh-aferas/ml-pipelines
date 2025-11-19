@@ -37,7 +37,7 @@ from snowflake.core.task import Cron
 from january_ml.constants import (
     CONNECTION,
     DB_NAME,
-    SCHEMA_NAME,
+    MODEL_SCHEMA,
     ROLE_NAME,
     ENVIRONMENT,
     #GIT_STAGE,
@@ -72,7 +72,7 @@ def _wait_for_run_to_complete(session: Session, dag: DAG) -> str:
                 root_task_name => '{dag.name.upper()}'
             ))
             where database_name = '{DB_NAME}'
-            and schema_name = '{SCHEMA_NAME}'
+            and schema_name = '{MODEL_SCHEMA}'
             and scheduled_from = 'EXECUTE TASK';
         """,
     ).collect()
@@ -91,7 +91,7 @@ def _wait_for_run_to_complete(session: Session, dag: DAG) -> str:
                     root_task_name=>'{dag.name.upper()}'
                 ))
                 where database_name = '{DB_NAME}'
-                and schema_name = '{SCHEMA_NAME}'
+                and schema_name = '{MODEL_SCHEMA}'
                 and run_id = {run_id};
             """,
         ).collect()
@@ -173,7 +173,7 @@ def _deploy_notebook(session: Session, notebook_file: str, project_name: str) ->
     """
     # Create fully qualified notebook name with project namespace
     notebook_name = notebook_file.replace(".ipynb","")
-    fully_qualified_name = f"{DB_NAME}.{SCHEMA_NAME}.{project_name}__{notebook_name}"
+    fully_qualified_name = f"{DB_NAME}.{MODEL_SCHEMA}.{project_name}__{notebook_name}"
     
     # Create notebook with runtime configuration
     nb_sql = f"""
@@ -611,7 +611,7 @@ if __name__ == "__main__":
     session = Session.builder.config("connection_name",CONNECTION).getOrCreate()
     session.use_role(ROLE_NAME)
     session.use_database(DB_NAME)
-    session.use_schema(SCHEMA_NAME)
+    session.use_schema(MODEL_SCHEMA)
 
     # Create project-specific warehouse and compute pool (sets global WAREHOUSE and COMPUTE_POOL)
     _create_compute_resources(session, args.project_name)
@@ -623,7 +623,7 @@ if __name__ == "__main__":
     # Initialize Snowflake API objects for DAG operations
     api_root = Root(session)
     db = api_root.databases[DB_NAME]
-    schema = db.schemas[SCHEMA_NAME]
+    schema = db.schemas[MODEL_SCHEMA]
     dag_op = DAGOperation(schema)
 
     # Deploy each DAG defined in the project configuration
