@@ -1,0 +1,15 @@
+# will need to have all elements needed to set up
+project_name: <PROJECT_NAME> # must match subdirectory
+
+deploy:
+  DAGS: # Each entry in this list will deploy a task graph on a given schedule
+    - name: <NAME> # Name of the root task
+      tasks: # Each entry in this list represent as task in the task graph
+        - name: <TASK1>
+          file: <FILE> # Must be py or ipynb
+          mljob: <BOOL> # OPTIONAL (default False) - If true, py will be run as mljob on spcs. If false, on warehouse
+          dep: <TASK0> # OPTIONAL - Task or list of tasks in this DAG that this task depends on. 
+          final: <BOOL> # OPTIONAL - Is this a finalizer task (will run even if rest of DAG fails)
+      schedule: <SCHEDULE> # OPTIONAL - Must be a cron value (ex. CRON 30 3 * * * UTC) or number [hours/minutes/seconds] (ex. 3 HOURS)
+      conda_packages: <PACKAGES> # OPTIONAL list of additional Conda packages to install in warehouse tasks. SPCS packages handled by pip-requirements.txt file.
+      
