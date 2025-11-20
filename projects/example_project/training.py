@@ -15,8 +15,8 @@ def main(session: Session, version: str) -> dict:
 
     # Train Model
 
-    X = df.drop(columns=["y"])
-    y = df[["y"]]
+    X = df.drop(columns=["OPENED"])
+    y = df[["OPENED"]]
 
     lr = LinearRegression()
     lr.fit(X, y)

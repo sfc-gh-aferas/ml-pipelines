@@ -219,7 +219,12 @@ def _get_return_vals(task_context: TaskContext, return_from_tasks: list, script_
     for task in return_from_tasks:
         result = task_context.get_predecessor_return_value(task).replace("'",'"')
         if result:
-            val = json.loads(result)
+            try:
+                val = json.loads(result)
+            except json.JSONDecodeError:
+                raise ValueError(f"Return value from task {task} is not a dictionary")
+            if not isinstance(val, dict):
+                raise ValueError(f"Return value from task {task} is not a dictionary")
             if script_args:
                 kw += [i for k,v in val.items() for i in ("--"+str(k),str(v))]
             else:

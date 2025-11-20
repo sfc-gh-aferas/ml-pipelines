@@ -92,3 +92,4 @@ echo "  4. Update pip-requirements.txt with your dependencies"
 echo "  5. Deploy your project: python scripts/deploy_project.py $PROJECT_NAME"
 echo ""
 
+

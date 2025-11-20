@@ -12,7 +12,6 @@ deploy:
       tasks:
         - name: inference
           file: inference.py
-          mljob: True
       schedule: 3 HOURS
     - name: EXAMPLE3
       tasks:
