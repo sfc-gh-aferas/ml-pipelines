@@ -2,6 +2,9 @@
 project_name: example_project
 
 deploy:
+  warehouse:
+    warehouse_size: SMALL
+    auto_suspend: 300
   DAGS:
     - name: EXAMPLE1
       tasks:

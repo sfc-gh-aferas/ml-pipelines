@@ -548,7 +548,97 @@ def create_dag(
     
     return dag
 
-def _create_compute_resources(session: Session, project_name: str) -> None:
+def _validate_compute_resources(resource_parameters: dict) -> dict:
+    """
+    Validate and normalize compute resource parameters for warehouse and compute pool creation.
+    
+    Filters input parameters against Snowflake's allowed parameter names for warehouses
+    and compute pools, merging them with sensible defaults. This ensures only valid
+    parameters are passed to CREATE WAREHOUSE and CREATE COMPUTE POOL SQL statements,
+    preventing SQL errors from invalid parameter names.
+    
+    Args:
+        resource_parameters (dict): Configuration dictionary that may contain:
+            - warehouse (dict): Optional warehouse parameters (e.g., WAREHOUSE_SIZE, AUTO_SUSPEND)
+            - compute_pool (dict): Optional compute pool parameters (e.g., MIN_NODES, INSTANCE_FAMILY)
+    
+    Returns:
+        dict: Validated parameters with structure:
+            {
+                "warehouse": {<validated_warehouse_params>},
+                "compute_pool": {
+                    "INSTANCE_FAMILY": "CPU_X64_XS",  # Default
+                    "MIN_NODES": 1,                    # Default
+                    "MAX_NODES": 1,                    # Default
+                    <additional_validated_params>
+                }
+            }
+    
+    Note:
+        - Parameter keys are case-insensitive (converted to uppercase for validation)
+        - Invalid parameter names are silently ignored
+        - Warehouse parameters default to empty dict if none provided
+        - Compute pool always gets default values for INSTANCE_FAMILY, MIN_NODES, MAX_NODES
+    
+    Example:
+        >>> params = {
+        ...     "warehouse": {"WAREHOUSE_SIZE": "SMALL", "AUTO_SUSPEND": 300},
+        ...     "compute_pool": {"MIN_NODES": 2}
+        ... }
+        >>> _validate_compute_resources(params)
+        {
+            "warehouse": {"WAREHOUSE_SIZE": "SMALL", "AUTO_SUSPEND": 300},
+            "compute_pool": {"INSTANCE_FAMILY": "CPU_X64_XS", "MIN_NODES": 2, "MAX_NODES": 1}
+        }
+    """
+    # Initialize valid parameters with defaults
+    # Warehouse starts empty (Snowflake will use system defaults)
+    # Compute pool gets minimal configuration defaults
+    valid_params = {
+        "warehouse":{},
+        "compute_pool":{
+            "INSTANCE_FAMILY":"CPU_X64_XS",  # Smallest CPU instance family
+            "MIN_NODES":1,                    # Single node minimum
+            "MAX_NODES":1,                    # No auto-scaling by default
+        }
+    }
+    
+    # Define allowed parameter names for each resource type
+    # Based on Snowflake SQL reference documentation for CREATE WAREHOUSE and CREATE COMPUTE POOL
+    valid_keys = {
+        "warehouse":[
+            "WAREHOUSE_SIZE","WAREHOUSE_TYPE","RESOURCE_CONSTRAINT","MAX_CLUSTER_COUNT","MIN_CLUSTER_COUNT","SCALING_POLICY","AUTO_SUSPEND",
+            "AUTO_RESUME","INITIALLY_SUSPENDED","RESOURCE_MONITOR","COMMENT","ENABLE_QUERY_ACCELERATION","QUERY_ACCELERATION_MAX_SCALE_FACTOR",
+            "MAX_CONCURRENCY_LEVEL","STATEMENT_QUEUED_TIMEOUT_IN_SECONDS","STATEMENT_TIMEOUT_IN_SECONDS"
+        ],
+        "compute_pool":[
+            "MIN_NODES","MAX_NODES","INSTANCE_FAMILY","AUTO_RESUME","INITIALLY_SUSPENDED","AUTO_SUSPEND_SECS","COMMENT","PLACEMENT_GROUP"
+        ]
+    }
+    
+    # Validate warehouse parameters if provided
+    warehouse = resource_parameters.get("warehouse",None)
+    if warehouse:
+        for k,v in warehouse.items():
+            # Convert key to uppercase for case-insensitive validation
+            if k.upper() in valid_keys["warehouse"]:
+                valid_params["warehouse"][k] = v
+                # Note: Invalid keys are silently ignored
+    
+    # Validate compute pool parameters if provided
+    compute_pool = resource_parameters.get("compute_pool",None)
+    if compute_pool:
+        for k,v in compute_pool.items():
+            # Convert key to uppercase for case-insensitive validation
+            if k.upper() in valid_keys["compute_pool"]:
+                # User-provided values override defaults
+                valid_params["compute_pool"][k] = v
+                # Note: Invalid keys are silently ignored
+    
+    return valid_params
+
+
+def _create_compute_resources(session: Session, project_name: str, compute_resource_params: dict) -> None:
     """
     Create project-specific compute resources (warehouse and compute pool).
     
@@ -571,18 +661,19 @@ def _create_compute_resources(session: Session, project_name: str) -> None:
 
     global WAREHOUSE
     WAREHOUSE = f"{project_name}_{ENVIRONMENT}_WH"
+    wh_sql = " ".join([f"{k} = {v}" for k,v in compute_resource_params["warehouse"].items()])
     session.sql(f"""
-        CREATE WAREHOUSE IF NOT EXISTS {WAREHOUSE}
-            WAREHOUSE_SIZE = SMALL;
+        CREATE OR REPLACE WAREHOUSE {WAREHOUSE} {wh_sql};
     """).collect()
 
     global COMPUTE_POOL
     COMPUTE_POOL = f"{project_name}_{ENVIRONMENT}_COMPUTE"
+    pool_exists = session.sql(f"SHOW COMPUTE POOLS LIKE '{COMPUTE_POOL}'").collect()
+    if pool_exists:
+        session.sql(f"DROP COMPUTE POOL {COMPUTE_POOL};").collect()
+    cp_sql = " ".join([f"{k} = {v}" for k,v in compute_resource_params["compute_pool"].items()])
     session.sql(f"""
-        CREATE COMPUTE POOL IF NOT EXISTS {COMPUTE_POOL}
-            MIN_NODES = 1
-            MAX_NODES = 1
-            INSTANCE_FAMILY = CPU_X64_M
+        CREATE COMPUTE POOL {COMPUTE_POOL} {cp_sql};
     """).collect()
 
 if __name__ == "__main__":
@@ -611,7 +702,7 @@ if __name__ == "__main__":
     # Load project configuration from YAML file and validate DAG definitions
     config = yaml.safe_load(open(f"projects/{args.project_name}/config.yml","r"))
     dags = _validate_dags(config['deploy']['DAGS'])
-
+    compute_resource_params = _validate_compute_resources(config['deploy'])
     # Initialize Snowflake session with configured connection
     session = Session.builder.config("connection_name",CONNECTION).getOrCreate()
     session.use_role(ROLE_NAME)
@@ -619,7 +710,7 @@ if __name__ == "__main__":
     session.use_schema(MODEL_SCHEMA)
 
     # Create project-specific warehouse and compute pool (sets global WAREHOUSE and COMPUTE_POOL)
-    _create_compute_resources(session, args.project_name)
+    _create_compute_resources(session, args.project_name, compute_resource_params)
     session.use_warehouse(WAREHOUSE)
 
     # Upload project files and dependencies to BUILD_STAGE and JOB_STAGE

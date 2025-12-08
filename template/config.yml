@@ -2,6 +2,19 @@
 project_name: <PROJECT_NAME> # must match subdirectory
 
 deploy:
+  # Warehouse Configuration (OPTIONAL)
+  # Snowflake warehouse for running DAG orchestration and notebook tasks
+  # If not specified, Snowflake defaults will be used
+  # Accepts any valid warehouse parameters
+  warehouse:
+
+  # Compute Pool Configuration (OPTIONAL)
+  # Snowflake compute pool for running ML jobs and containerized workloads (SPCS)
+  # Defaults: INSTANCE_FAMILY=CPU_X64_XS, MIN_NODES=1, MAX_NODES=1
+  # Accepts any valid compute pool parameters
+  compute_pool:
+
+
   DAGS: # Each entry in this list will deploy a task graph on a given schedule
     - name: <NAME> # Name of the root task
       tasks: # Each entry in this list represent as task in the task graph
