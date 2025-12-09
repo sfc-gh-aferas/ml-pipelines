@@ -41,10 +41,9 @@ jobs:
         # Use the CLI
       - name: Execute Snowflake CLI command
         env:
-          SNOWFLAKE_AUTHENTICATOR: SNOWFLAKE_JWT
-          SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
+          SNOWFLAKE_USER: sf-stg-service-user
           SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
-          SNOWFLAKE_PRIVATE_KEY_RAW: ${{ secrets.SNOWFLAKE_PRIVATE_KEY }}
+          SNOWFLAKE_PASSWORD: ${{ secrets.STAGING_GITHUB_TOKEN }}
         run: |
           snow --help
           snow connection test -x
@@ -86,7 +85,7 @@ jobs:
           SNOWFLAKE_CONNECTION: github_actions
           SNOWFLAKE_ROLE: EXTERNAL_SNOWFLAKE_ARCHITECTS
           SNOWFLAKE_DATABASE: ML_COLLAB_DEV_DB
-          SNOWFLAKE_SCHEMA: SANDBOX
+          FEATURE_SCHEMA: SANDBOX
           SNOWFLAKE_ENVIRONMENT: DEV
         run: |
           echo "🚀 Deploying Feature Store to DEV environment..."
@@ -99,7 +98,7 @@ jobs:
           SNOWFLAKE_CONNECTION: github_actions
           SNOWFLAKE_ROLE: EXTERNAL_SNOWFLAKE_ARCHITECTS
           SNOWFLAKE_DATABASE: ML_COLLAB_DEV_DB
-          SNOWFLAKE_SCHEMA: SANDBOX
+          MODEL_SCHEMA: SANDBOX
           SNOWFLAKE_ENVIRONMENT: DEV
         run: |
           echo "🚀 Deploying changed projects to DEV environment..."
