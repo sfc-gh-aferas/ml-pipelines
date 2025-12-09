@@ -20,7 +20,7 @@ Configuration:
 
 import yaml
 import feature_views
-from typing import Dict, Any, List, Union
+from typing import Dict, Any
 from snowflake.snowpark import Session
 from snowflake.ml.feature_store import (
     FeatureStore, 
@@ -28,8 +28,7 @@ from snowflake.ml.feature_store import (
     Entity, 
     FeatureView,
 )
-
-from january_ml.utils import version_featureview
+import snowflake.snowpark.functions as F
 from january_ml.constants import (
     CONNECTION,
     DB_NAME,
@@ -98,6 +97,72 @@ def _validate_featureview(feature_view_config: Dict[str, Any]) -> Dict[str, Any]
     valid_dict = {k:v for k,v in valid_dict.items() if v}
     return valid_dict
 
+def _version_featureview(feature_store: FeatureStore, feature_view: FeatureView) -> str:
+    """
+    Determine the appropriate version for a feature view based on its definition.
+    
+    Implements a smart versioning strategy that:
+      - Creates a new version (increments) when breaking changes are detected
+        (changes to entities, query, timestamp column, or clustering)
+      - Updates the existing version in-place for non-breaking metadata changes
+        (refresh frequency, warehouse, or description)
+      - Returns version "1" for brand new feature views
+    
+    This approach minimizes unnecessary version proliferation while ensuring
+    that downstream consumers are protected from breaking schema changes.
+    
+    Args:
+        feature_store (FeatureStore): The initialized Snowflake Feature Store instance
+        feature_view (FeatureView): The new feature view to version
+    
+    Returns:
+        str: The version string to use when registering the feature view.
+             Either a new incremented version or the existing version number.
+    
+    Examples:
+        >>> version = _version_featureview(fs, my_feature_view)
+        >>> fs.register_feature_view(my_feature_view, version=version)
+    
+    """
+    name = str(feature_view.name)
+    
+    # Check if any versions of this feature view already exist
+    existing = feature_store.list_feature_views().filter(F.col("NAME") == name).collect()
+    
+    if existing:
+        # Find the highest (most recent) version number
+        last_version = max([int(row.VERSION) for row in existing])
+        last_feature_view = feature_store.get_feature_view(name=name, version=str(last_version))
+        
+        # Compare entities - a change in entities is a breaking change
+        last_ent = [e.name for e in last_feature_view.entities]
+        new_ent = [e.name for e in feature_view.entities]
+        if last_ent != new_ent:
+            return str(last_version+1)
+        
+        # Check for breaking changes in core feature view attributes
+        # These attributes affect the data schema or query logic
+        breaking_change_keys = ['_query', '_name','_timestamp_col','_cluster_by']
+        for k in breaking_change_keys:
+            if getattr(last_feature_view, k) != getattr(feature_view, k):
+                return str(last_version+1)
+
+        # For non-breaking metadata changes, update the existing version in-place
+        # These changes don't affect the data schema, so no new version is needed
+        metadata_keys = ["refresh_freq", "warehouse", "desc"]
+        updates = {
+            k: getattr(feature_view, k) 
+            for k in metadata_keys
+            if getattr(feature_view, k) != getattr(last_feature_view, k)
+        }
+        if updates:
+            feature_store.update_feature_view(name=name, version=str(last_version), **updates)
+        
+        return str(last_version)
+    
+    # No existing versions found - this is a new feature view
+    return str(1)
+
 if __name__ == "__main__":
 
     # Load feature store configuration from YAML file
@@ -149,9 +214,8 @@ if __name__ == "__main__":
             entities=entities,
             **fv_args,
         )
-        
         # Generate version hash based on feature view definition
-        version = version_featureview(fv)
+        version = _version_featureview(fs,fv)
         fs.register_feature_view(fv, version=version)
     
     session.close()

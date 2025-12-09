@@ -8,4 +8,5 @@ feature_views:
     function: create_example_features
     entities: example_entity
     timestamp_col: CREATED_AT
+    desc: Example features for example entity
     #refresh_freq: 1 day
