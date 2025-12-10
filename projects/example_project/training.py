@@ -1,4 +1,4 @@
-from sklearn.linear_model import LinearRegression
+from sklearn.linear_model import LogisticRegression
 
 from snowflake.snowpark.session import Session
 from snowflake.ml.registry import Registry
@@ -18,27 +18,27 @@ def main(session: Session, train_version: str, test_version: str) -> dict:
     X_train = df.drop(columns=["OPENED"])
     y_train = df[["OPENED"]]
 
-    lr = LinearRegression()
+    lr = LogisticRegression()
     lr.fit(X_train, y_train)
 
-    ds_name = "TEST_DATASET"
-    ds = Dataset.create(session=session, name=ds_name, exist_ok=True)
-    sdf = ds.select_version(test_version).read.to_snowpark_dataframe()
-    df = sdf.to_pandas()
+    test_ds_name = "TEST_DATASET"
+    test_ds = Dataset.create(session=session, name=test_ds_name, exist_ok=True)
+    test_sdf = test_ds.select_version(test_version).read.to_snowpark_dataframe()
+    test_df = test_sdf.to_pandas()
 
-    X_test = df.drop(columns=["OPENED"])
-    y_test = df[["OPENED"]]
+    X_test = test_df.drop(columns=["OPENED"])
+    y_test = test_df[["OPENED"]]
 
     score = lr.score(X_test, y_test)
 
     # Register model
     reg = Registry(session=session)
 
-    model_name = "TEST_MODEL"
+    model_name = "MODEL_EX2"
     mv = reg.log_model(
         model=lr, 
         model_name=model_name, 
-        sample_input_data=X_train, 
+        sample_input_data=sdf.drop("OPENED").limit(100), 
         target_platforms=["WAREHOUSE", "SNOWPARK_CONTAINER_SERVICES"],
         metrics={"score": score}
     )
