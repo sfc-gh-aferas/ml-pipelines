@@ -41,9 +41,9 @@ jobs:
         # Use the CLI
       - name: Execute Snowflake CLI command
         env:
-          SNOWFLAKE_USER: sf-stg-service-user
+          SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER}}
           SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
-          SNOWFLAKE_PASSWORD: ${{ secrets.STAGING_GITHUB_TOKEN }}
+          SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD}}
         run: |
           snow --help
           snow connection test -x
