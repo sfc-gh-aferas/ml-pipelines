@@ -16,6 +16,10 @@ jobs:
       SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER}}
       SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
       SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD}}
+      SNOWFLAKE_DATABASE: ML_COLLAB_DEV_DB
+      SNOWFLAKE_MODEL_SCHEMA: SHARED_WORK
+      SNOWFLAKE_FEATURE_SCHEMA: SHARED_WORK
+      SNOWFLAKE_ENVIRONMENT: DEV
 
     steps:
       - name: Checkout code
@@ -82,10 +86,6 @@ jobs:
           fi
       - name: Deploy Feature Store
         if: steps.changes.outputs.feature_store_changed == 'true'
-        env:
-          SNOWFLAKE_DATABASE: ML_COLLAB_DEV_DB
-          SNOWFLAKE_FEATURE_SCHEMA: SHARED_WORK
-          SNOWFLAKE_ENVIRONMENT: DEV
         run: |
           echo "🚀 Deploying Feature Store to DEV environment..."
           python feature_store/setup_feature_store.py
@@ -93,10 +93,6 @@ jobs:
 
       - name: Deploy Changed Projects
         if: steps.changes.outputs.changed_projects != ''
-        env:
-          SNOWFLAKE_DATABASE: ML_COLLAB_DEV_DB
-          SNOWFLAKE_MODEL_SCHEMA: SHARED_WORK
-          SNOWFLAKE_ENVIRONMENT: DEV
         run: |
           echo "🚀 Deploying changed projects to DEV environment..."
           

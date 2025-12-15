@@ -51,6 +51,7 @@ if __name__ == "__main__":
     parser.add_argument("--train_version")
     parser.add_argument("--test_version")
     args = parser.parse_args()
+    
 
     session = Session.builder.getOrCreate()
 

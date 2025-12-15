@@ -742,6 +742,10 @@ if __name__ == "__main__":
         # Deploy to Snowflake (replaces existing DAG with same name)
         dag_op.deploy(dag, mode=CreateMode.or_replace)
         deployed_dags.append(dag)
+
+    #just for troubleshooting, delete this later
+    session.sql("GRANT OWNERSHIP ON ALL TASKS IN SCHEMA SHARED_WORK TO ROLE EXTERNAL_SNOWFLAKE_ARCHITECTS;").collect()
+    session.sql(f"GRANT USAGE ON WAREHOUSE {WAREHOUSE} TO ROLE EXTERNAL_SNOWFLAKE_ARCHITECTS;").collect()
     
     # Optionally execute DAGs immediately for validation/testing (CI/CD use)
     if args.run_dag:
