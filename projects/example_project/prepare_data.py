@@ -2,7 +2,7 @@ from snowflake.snowpark.session import Session
 from snowflake.ml.dataset import Dataset
 from snowflake.ml.feature_store import FeatureStore, CreationMode
 from january_ml.utils import version_data
-from january_ml.constants import FEATURE_SCHEMA
+from january_ml.snowflake_env import get_feature_schema
 
 def main(session: Session) -> dict:
 
@@ -11,7 +11,7 @@ def main(session: Session) -> dict:
     fs = FeatureStore(
         session=session,
         database=session.get_current_database(),
-        name="SHARED_WORK",
+        name=get_feature_schema(session),
         default_warehouse=session.get_current_warehouse(),
         creation_mode=CreationMode.CREATE_IF_NOT_EXIST
     )

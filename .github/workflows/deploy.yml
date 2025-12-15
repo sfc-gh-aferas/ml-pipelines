@@ -16,9 +16,6 @@ jobs:
       SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER}}
       SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
       SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD}}
-      SNOWFLAKE_DATABASE: ML_COLLAB_DEV_DB
-      SNOWFLAKE_MODEL_SCHEMA: SHARED_WORK
-      SNOWFLAKE_FEATURE_SCHEMA: SHARED_WORK
       SNOWFLAKE_ENVIRONMENT: DEV
 
     steps:
@@ -52,6 +49,10 @@ jobs:
         run: |
           snow --help
           snow connection test -x
+
+      - name: cleanup
+        run: |
+          python scripts/cleanup.py example_project --dry-run
 
       - name: Detect changed directories
         id: changes
@@ -88,7 +89,7 @@ jobs:
         if: steps.changes.outputs.feature_store_changed == 'true'
         run: |
           echo "🚀 Deploying Feature Store to DEV environment..."
-          python feature_store/setup_feature_store.py
+          python scripts/setup_feature_store.py
           echo "✅ Feature Store deployment complete"
 
       - name: Deploy Changed Projects
