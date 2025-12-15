@@ -276,11 +276,15 @@ def cleanup_entity(session: Session, entity_name: str, dry_run: bool = False) ->
     else:
         try:
             entity = fs.get_entity(entity_name)
+        except Exception as e:
+            print(f"  ⚠️  Could not get entity {entity_name}: {e}")
+            return True
+        try:
             fs.delete_entity(entity_name)
             print(f"  ✅ Deleted entity {entity_name}")
             return True
         except Exception as e:
-            # Entity might not exist or might have dependencies
+            # Entity might have dependencies
             print(f"  ⚠️  Could not delete entity {entity_name}: {e}")
             return False
 
@@ -481,14 +485,6 @@ def main():
             session.use_schema(get_feature_schema(session))
             if not cleanup_features(session, feature_names, dry_run):
                 fs_cleanup_success = False
-            
-            # Clean up all entities
-            entity_names = [e["name"] for e in feature_config.get("entities", [])]
-            if entity_names:
-                print("\n🏷️  Removing all Entities...")
-                for entity_name in entity_names:
-                    if not cleanup_entity(session, entity_name, dry_run):
-                        fs_cleanup_success = False
             
             # Clean up feature store warehouse only if all feature store resources were deleted
             if fs_cleanup_success:
