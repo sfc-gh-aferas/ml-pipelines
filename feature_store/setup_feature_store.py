@@ -20,6 +20,7 @@ Configuration:
 
 import yaml
 import feature_views
+import os
 from typing import Dict, Any
 from snowflake.snowpark import Session
 from snowflake.ml.feature_store import (
@@ -30,10 +31,11 @@ from snowflake.ml.feature_store import (
 )
 import snowflake.snowpark.functions as F
 from january_ml.constants import (
-    CONNECTION,
+    ACCOUNT,
+    USER,
+    PASSWORD,
     DB_NAME,
     FEATURE_SCHEMA,
-    ROLE_NAME,
     ENVIRONMENT,
 )
 
@@ -169,10 +171,13 @@ if __name__ == "__main__":
     config = yaml.safe_load(open("feature_store/config.yml","r"))
 
     # Initialize Snowflake session with configured connection
-    session = Session.builder.config("connection_name",CONNECTION).getOrCreate()
-    session.use_role(ROLE_NAME)
-    session.use_database(DB_NAME)
-    session.use_schema(FEATURE_SCHEMA)
+    session = Session.builder.configs({
+        "user": USER,
+        "password": PASSWORD,
+        "account": ACCOUNT,
+        "database": DB_NAME,
+        "schema": FEATURE_SCHEMA,
+    }).create()
 
     # Create dedicated warehouse for feature store operations
     session.sql(f"""

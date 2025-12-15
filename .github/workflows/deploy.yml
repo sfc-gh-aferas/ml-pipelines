@@ -9,9 +9,14 @@ on:
       - 'projects/**'
 
 jobs:
-  deploy:
+  staging:
     runs-on: ubuntu-latest
-    
+
+    env:
+      SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER}}
+      SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+      SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD}}
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -40,10 +45,6 @@ jobs:
 
         # Use the CLI
       - name: Execute Snowflake CLI command
-        env:
-          SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER}}
-          SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
-          SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD}}
         run: |
           snow --help
           snow connection test -x
@@ -82,10 +83,8 @@ jobs:
       - name: Deploy Feature Store
         if: steps.changes.outputs.feature_store_changed == 'true'
         env:
-          SNOWFLAKE_CONNECTION: github_actions
-          SNOWFLAKE_ROLE: EXTERNAL_SNOWFLAKE_ARCHITECTS
           SNOWFLAKE_DATABASE: ML_COLLAB_DEV_DB
-          FEATURE_SCHEMA: SANDBOX
+          SNOWFLAKE_FEATURE_SCHEMA: SHARED_WORK
           SNOWFLAKE_ENVIRONMENT: DEV
         run: |
           echo "🚀 Deploying Feature Store to DEV environment..."
@@ -95,8 +94,6 @@ jobs:
       - name: Deploy Changed Projects
         if: steps.changes.outputs.changed_projects != ''
         env:
-          SNOWFLAKE_CONNECTION: github_actions
-          SNOWFLAKE_ROLE: EXTERNAL_SNOWFLAKE_ARCHITECTS
           SNOWFLAKE_DATABASE: ML_COLLAB_DEV_DB
           MODEL_SCHEMA: SANDBOX
           SNOWFLAKE_ENVIRONMENT: DEV
