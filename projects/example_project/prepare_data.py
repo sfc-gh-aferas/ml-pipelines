@@ -5,6 +5,7 @@ from january_ml.utils import version_data
 from january_ml.snowflake_env import get_feature_schema
 
 def main(session: Session) -> dict:
+    
     # Get Data
     fs = FeatureStore(
         session=session,

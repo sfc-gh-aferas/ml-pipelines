@@ -1,5 +1,6 @@
 # will need to have all elements needed to set up
 project_name: example_project
+active: True
 
 deploy:
   warehouse:
