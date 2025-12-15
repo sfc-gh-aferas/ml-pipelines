@@ -240,7 +240,7 @@ def _deploy_notebook(session: Session, notebook_file: str, project_name: str) ->
     """
     # Create fully qualified notebook name with project namespace
     notebook_name = notebook_file.replace(".ipynb","")
-    fully_qualified_name = f"{session.get_current_database()}.{session.get_current_schema()}.{project_name}__{notebook_name}"
+    fully_qualified_name = f"{session.get_current_database()}.{get_model_schema(session)}.{project_name}__{notebook_name}"
     
     # Create notebook with runtime configuration
     nb_sql = f"""
@@ -821,9 +821,13 @@ if __name__ == "__main__":
         dag_op.deploy(dag, mode=CreateMode.or_replace)
         deployed_dags.append(dag)
         
-        # Grant privileges on the root task (DAG) based on environment
-        task_name = f"{session.get_current_database()}.{session.get_current_schema()}.{dag.name}"
-        _grant_privileges(session, "task", task_name)
+        # Grant privileges on all tasks in the DAG
+        # Root task has the same name as the DAG
+        _grant_privileges(session, "task", f"{schema_name}.{dag.name}")
+        # Child tasks have names in format DAG_NAME$TASK_NAME
+        for task in dag.tasks:
+            _grant_privileges(session, "task", f"{schema_name}.{dag.name}${task.name}")
+    
 
     # Optionally execute DAGs immediately for validation/testing (CI/CD use)
     if args.run_dag:
