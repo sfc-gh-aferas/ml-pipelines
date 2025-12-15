@@ -4,9 +4,9 @@ on:
   push:
     branches:
       - '**'  # Trigger on push to any branch
-    #paths:
-    #  - 'feature_store/**'
-    #  - 'projects/**'
+    paths:
+      - 'feature_store/**'
+      - 'projects/**'
 
 jobs:
   staging:
@@ -16,7 +16,7 @@ jobs:
       SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER}}
       SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
       SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD}}
-      SNOWFLAKE_ENVIRONMENT: DEV
+      SNOWFLAKE_ENVIRONMENT: STAGING
 
     steps:
       - name: Checkout code
@@ -49,10 +49,6 @@ jobs:
         run: |
           snow --help
           snow connection test -x
-
-      - name: cleanup
-        run: |
-          python scripts/cleanup.py --all
 
       - name: Detect changed directories
         id: changes

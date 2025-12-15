@@ -3,10 +3,24 @@ entities:
     join_keys: 
       - BORROWERCOMM_UUID
 
+# Warehouse configuration for feature store operations
+# One warehouse must be marked as 'default: true' for the feature store
+# Additional warehouses can be referenced by feature views via 'warehouse' field
+warehouses:
+  - name: FEATURE_STORE
+    warehouse_size: SMALL
+    auto_suspend: 300
+    default: true
+  # Example of an additional warehouse for heavy feature computations
+  # - name: HEAVY_COMPUTE
+  #   warehouse_size: LARGE
+  #   auto_suspend: 60
+
 feature_views:
   - name: example_features
     function: create_example_features
     entities: example_entity
     timestamp_col: CREATED_AT
     desc: Example features for example entity
+    # warehouse: HEAVY_COMPUTE  # Optional: specify a non-default warehouse
     #refresh_freq: 1 day

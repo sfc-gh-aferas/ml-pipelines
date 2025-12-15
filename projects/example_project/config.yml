@@ -6,11 +6,11 @@ deploy:
     warehouse_size: SMALL
     auto_suspend: 300
   DAGS:
-    - name: EXAMPLE1
-      tasks:
-        - name: training
-          file: training.ipynb
-      schedule: CRON 30 3 * * * UTC
+    #- name: EXAMPLE1
+    #  tasks:
+    #    - name: training
+    #      file: training.ipynb
+    #  schedule: CRON 30 3 * * * UTC
     - name: EXAMPLE2
       tasks:
         - name: inference

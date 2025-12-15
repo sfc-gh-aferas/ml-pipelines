@@ -61,14 +61,16 @@ def _wait_for_run_to_complete(session: Session, dag: DAG) -> str:
     """
     # NOTE: We assume the most recent run is our run
     # It would be better to add some unique identifier to the DAG to make it easier to identify the run
+    DB_NAME = session.get_current_database().replace('"','')
+    MODEL_SCHEMA = get_model_schema(session)
     recent_runs = session.sql(
         f"""
         select run_id
-            from table({session.get_current_database()}.information_schema.current_task_graphs(
+            from table({DB_NAME}.information_schema.current_task_graphs(
                 root_task_name => '{dag.name.upper()}'
             ))
-            where database_name = '{session.get_current_database()}'
-            and schema_name = '{session.get_current_schema()}'
+            where database_name = '{DB_NAME}'
+            and schema_name = '{MODEL_SCHEMA}'
             and scheduled_from = 'EXECUTE TASK';
         """,
     ).collect()
@@ -83,11 +85,11 @@ def _wait_for_run_to_complete(session: Session, dag: DAG) -> str:
         result = session.sql(
             f"""
             select state
-                from table({session.get_current_database()}.information_schema.complete_task_graphs(
+                from table({DB_NAME}.information_schema.complete_task_graphs(
                     root_task_name=>'{dag.name.upper()}'
                 ))
-                where database_name = '{session.get_current_database()}'
-                and schema_name = '{session.get_current_schema()}'
+                where database_name = '{DB_NAME}'
+                and schema_name = '{MODEL_SCHEMA}'
                 and run_id = {run_id};
             """,
         ).collect()
@@ -164,10 +166,6 @@ def _deploy_notebook(session: Session, notebook_file: str, project_name: str) ->
     Returns:
         str: Fully qualified name of the deployed notebook (DB.SCHEMA.PROJECT__NOTEBOOK)
     
-    Note:
-        TODO: Add support for Git branch-based deployment
-        TODO: Make compute pool selection configurable per notebook
-        TODO: Add error handling logic for notebook creation failures
     """
     # Create fully qualified notebook name with project namespace
     notebook_name = notebook_file.replace(".ipynb","")
@@ -740,6 +738,7 @@ if __name__ == "__main__":
         dag_op.deploy(dag, mode=CreateMode.or_replace)
         deployed_dags.append(dag)
 
+    print(deployed_dags[0].name)
     # Optionally execute DAGs immediately for validation/testing (CI/CD use)
     if args.run_dag:
         for d in deployed_dags:
