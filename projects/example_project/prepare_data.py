@@ -11,7 +11,7 @@ def main(session: Session) -> dict:
     fs = FeatureStore(
         session=session,
         database=session.get_current_database(),
-        name=FEATURE_SCHEMA,
+        name="SHARED_WORK",
         default_warehouse=session.get_current_warehouse(),
         creation_mode=CreationMode.CREATE_IF_NOT_EXIST
     )
