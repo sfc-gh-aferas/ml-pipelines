@@ -42,6 +42,70 @@ from january_ml.snowflake_env import (
     get_job_stage,
 )
 
+# Roles to grant privileges to
+PRIVILEGE_ROLES = ["ML_ENGINEER", "EXTERNAL_SNOWFLAKE_ARCHITECTS"]
+
+# Privilege definitions based on environment
+# DEV: Full access for development and testing
+# STAGING/PROD: Read-only and monitoring access
+PRIVILEGES_BY_ENV = {
+    "DEV": {
+        "warehouse": ["ALL PRIVILEGES"],
+        "compute pool": ["ALL PRIVILEGES"],
+        "stage": ["ALL PRIVILEGES"],
+        "task": ["ALL PRIVILEGES"],
+        "schema": ["USAGE", "CREATE STAGE", "CREATE NOTEBOOK", "CREATE TASK", "MODIFY"],
+    },
+    "STAGING": {
+        "warehouse": ["MONITOR"],
+        "compute pool": ["MONITOR"],
+        "stage": ["READ"],
+        "task": ["MONITOR"],
+        "schema": ["USAGE"],
+    },
+    "PROD": {
+        "warehouse": ["MONITOR"],
+        "compute pool": ["MONITOR"],
+        "stage": ["READ"],
+        "task": ["MONITOR"],
+        "schema": ["USAGE"],
+    },
+}
+
+
+def _grant_privileges(session: Session, object_type: str, object_name: str) -> None:
+    """
+    Grant privileges on a Snowflake object to configured roles based on environment.
+    
+    Applies environment-appropriate privileges to the ML_ENGINEER and 
+    EXTERNAL_SNOWFLAKE_ARCHITECTS roles. DEV environment gets full access,
+    while STAGING and PROD environments get monitoring/viewing privileges only.
+    
+    Args:
+        session (Session): Active Snowflake session
+        object_type (str): Type of object (e.g., 'warehouse', 'stage', 'task', etc.)
+        object_name (str): Fully qualified name of the object
+    
+    Side Effects:
+        Executes GRANT statements in Snowflake
+    """
+    env_privileges = PRIVILEGES_BY_ENV.get(ENVIRONMENT, PRIVILEGES_BY_ENV["PROD"])
+    privileges = env_privileges.get(object_type, [])
+    
+    if not privileges:
+        return
+    
+    sql_object_type = object_type.upper()
+    
+    for role in PRIVILEGE_ROLES:
+        for privilege in privileges:
+            try:
+                session.sql(f"""
+                    GRANT {privilege} ON {sql_object_type} {object_name} TO ROLE {role};
+                """).collect()
+            except Exception as e:
+                print(f"Warning: Could not grant {privilege} on {sql_object_type} {object_name} to {role}: {e}")
+
 def _wait_for_run_to_complete(session: Session, dag: DAG) -> str:
     """
     Wait for a DAG run to complete and return the final status.
@@ -115,6 +179,7 @@ def stage_directory(session: Session, project_dir: str) -> list[str]:
     Creates two Snowflake stages (BUILD_STAGE, JOB_STAGE) if they don't exist,
     removes any previous project files from these stages, and uploads all files
     from the project directory along with the january_ml package wheel.
+    Grants appropriate privileges based on the current environment.
     
     Args:
         session (Session): Active Snowflake session
@@ -124,12 +189,18 @@ def stage_directory(session: Session, project_dir: str) -> list[str]:
         list[str]: List of stage paths for all uploaded files (e.g., '@BUILD_STAGE/project/file.py')
     """
     # Create stages and remove previous project files
+    global BUILD_STAGE
+    global JOB_STAGE
     BUILD_STAGE = get_build_stage(session)
     JOB_STAGE = get_job_stage(session)
     session.sql(f"CREATE STAGE IF NOT EXISTS {BUILD_STAGE}").collect()
     session.sql(f"REMOVE @{BUILD_STAGE}/{project_dir}").collect()
     session.sql(f"CREATE STAGE IF NOT EXISTS {JOB_STAGE}").collect()
     session.sql(f"REMOVE @{JOB_STAGE}/{project_dir}").collect()
+    
+    # Grant privileges on stages based on environment
+    _grant_privileges(session, "stage", BUILD_STAGE)
+    _grant_privileges(session, "stage", JOB_STAGE)
 
     # Upload all non-directory files from the project directory
     staged_files = []
@@ -174,7 +245,7 @@ def _deploy_notebook(session: Session, notebook_file: str, project_name: str) ->
     # Create notebook with runtime configuration
     nb_sql = f"""
         CREATE OR REPLACE NOTEBOOK {fully_qualified_name}
-        FROM @{get_build_stage(session)}/{project_name}
+        FROM @{BUILD_STAGE}/{project_name}
         MAIN_FILE = '{notebook_file}'
         QUERY_WAREHOUSE = {WAREHOUSE}
         RUNTIME_NAME = 'SYSTEM$BASIC_RUNTIME'
@@ -186,7 +257,6 @@ def _deploy_notebook(session: Session, notebook_file: str, project_name: str) ->
     # Activate a live version of the notebook for execution
     alter_sql = f"""ALTER NOTEBOOK {fully_qualified_name} ADD LIVE VERSION FROM LAST;"""
     session.sql(alter_sql).collect()
-    # TODO: logic to handle failure
 
     print(f"Successfully deployed notebook {fully_qualified_name}")
     return fully_qualified_name
@@ -274,13 +344,13 @@ def _get_mljob_runner(filename: str, project_name: str, return_from_tasks: list 
         params = _get_return_vals(task_context=ctx, return_from_tasks=return_from_tasks, script_args=True)
             
         # Submit Python script as ML job with dependencies
-        BUILD_STAGE = get_build_stage(session)
+
         stage_path = f"@{BUILD_STAGE}/{project_name}"
         job = submit_from_stage(
             source=stage_path,
             compute_pool=COMPUTE_POOL,
             entrypoint=f"{filename}",
-            stage_name={get_job_stage(session)},
+            stage_name=JOB_STAGE,
             session=session,
             args=params,
             pip_requirements=["-r ../app/pip-requirements.txt"],
@@ -512,7 +582,7 @@ def create_dag(
         name=f"{project_name}_{dag_name}",
         schedule=schedule, 
         warehouse=WAREHOUSE, 
-        stage_location=get_job_stage(session),
+        stage_location=JOB_STAGE,
         packages=packages,
         imports=imports,
     ) as dag:
@@ -643,13 +713,16 @@ def _create_compute_resources(session: Session, project_name: str, compute_resou
     setting global variables WAREHOUSE and COMPUTE_POOL for use by deployment
     functions. Resource names are prefixed with the sanitized project name and
     environment to ensure isolation between projects and environments.
+    Grants appropriate privileges based on the current environment.
     
     Args:
         session (Session): Active Snowflake session
         project_name (str): Project name (will be sanitized for Snowflake identifiers)
+        compute_resource_params (dict): Validated compute resource parameters
     
     Side Effects:
         Sets global variables WAREHOUSE and COMPUTE_POOL
+        Grants privileges to ML_ENGINEER and EXTERNAL_SNOWFLAKE_ARCHITECTS roles
     
     Note:
         Non-alphanumeric characters in project_name are replaced with underscores
@@ -662,6 +735,9 @@ def _create_compute_resources(session: Session, project_name: str, compute_resou
     session.sql(f"""
         CREATE OR REPLACE WAREHOUSE {WAREHOUSE} {wh_sql};
     """).collect()
+    
+    # Grant privileges on warehouse based on environment
+    _grant_privileges(session, "warehouse", WAREHOUSE)
 
     global COMPUTE_POOL
     COMPUTE_POOL = f"{project_name}_{ENVIRONMENT}_COMPUTE"
@@ -672,6 +748,9 @@ def _create_compute_resources(session: Session, project_name: str, compute_resou
     session.sql(f"""
         CREATE COMPUTE POOL {COMPUTE_POOL} {cp_sql};
     """).collect()
+    
+    # Grant privileges on compute pool based on environment
+    _grant_privileges(session, "compute_pool", COMPUTE_POOL)
 
 if __name__ == "__main__":
 
@@ -709,6 +788,10 @@ if __name__ == "__main__":
     # Create project-specific warehouse and compute pool (sets global WAREHOUSE and COMPUTE_POOL)
     _create_compute_resources(session, args.project_name, compute_resource_params)
     session.use_warehouse(WAREHOUSE)
+    
+    # Grant schema-level privileges based on environment
+    schema_name = f"{session.get_current_database()}.{session.get_current_schema()}"
+    _grant_privileges(session, "schema", schema_name)
 
     # Upload project files and dependencies to BUILD_STAGE and JOB_STAGE
     staged_files = stage_directory(session, args.project_name)
@@ -737,8 +820,11 @@ if __name__ == "__main__":
         # Deploy to Snowflake (replaces existing DAG with same name)
         dag_op.deploy(dag, mode=CreateMode.or_replace)
         deployed_dags.append(dag)
+        
+        # Grant privileges on the root task (DAG) based on environment
+        task_name = f"{session.get_current_database()}.{session.get_current_schema()}.{dag.name}"
+        _grant_privileges(session, "task", task_name)
 
-    print(deployed_dags[0].name)
     # Optionally execute DAGs immediately for validation/testing (CI/CD use)
     if args.run_dag:
         for d in deployed_dags:

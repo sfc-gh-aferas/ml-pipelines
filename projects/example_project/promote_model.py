@@ -14,7 +14,7 @@ def main(session: Session, model_version: str) -> None:
     # Get model
     reg = Registry(session=session)
 
-    model_name = "TEST_MODEL"
+    model_name = "MODEL_EX2"
 
     base_model = reg.get_model(model_name)
     mv = base_model.version(model_version)

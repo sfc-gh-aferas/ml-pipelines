@@ -48,6 +48,80 @@ VALID_WAREHOUSE_KEYS = [
     "STATEMENT_QUEUED_TIMEOUT_IN_SECONDS", "STATEMENT_TIMEOUT_IN_SECONDS"
 ]
 
+# Roles to grant privileges to
+PRIVILEGE_ROLES = ["ML_ENGINEER", "EXTERNAL_SNOWFLAKE_ARCHITECTS"]
+
+# Privilege definitions based on environment
+# DEV: Full access for development and testing
+# STAGING/PROD: Read-only and monitoring access
+PRIVILEGES_BY_ENV = {
+    "DEV": {
+        "warehouse": ["ALL PRIVILEGES"],
+        "schema": ["USAGE", "CREATE TABLE", "CREATE VIEW", "CREATE DYNAMIC TABLE", "MODIFY"],
+        "feature_view_dynamic_table": ["ALL PRIVILEGES"],
+        "feature_view_view": ["ALL PRIVILEGES"],  # Allows modifying view query
+    },
+    "STAGING": {
+        "warehouse": ["MONITOR"],
+        "schema": ["USAGE"],
+        "feature_view_dynamic_table": ["SELECT"],
+        "feature_view_view": ["SELECT"],
+    },
+    "PROD": {
+        "warehouse": ["MONITOR"],
+        "schema": ["USAGE"],
+        "feature_view_dynamic_table": ["SELECT"],
+        "feature_view_view": ["SELECT"],
+    },
+}
+
+
+def _grant_privileges(session: Session, object_type: str, object_name: str) -> None:
+    """
+    Grant privileges on a Snowflake object to configured roles based on environment.
+    
+    Applies environment-appropriate privileges to the ML_ENGINEER and 
+    EXTERNAL_SNOWFLAKE_ARCHITECTS roles. DEV environment gets full access,
+    while STAGING and PROD environments get monitoring/viewing privileges only.
+    
+    For feature views, attempts to grant on both DYNAMIC TABLE and VIEW since
+    feature views can be materialized as either type, with different privileges
+    for each (views get ALL PRIVILEGES in DEV to allow query modification).
+    
+    Args:
+        session (Session): Active Snowflake session
+        object_type (str): Type of object (e.g., 'warehouse', 'schema', 'feature_view')
+        object_name (str): Fully qualified name of the object
+    
+    Side Effects:
+        Executes GRANT statements in Snowflake
+    """
+    env_privileges = PRIVILEGES_BY_ENV.get(ENVIRONMENT, PRIVILEGES_BY_ENV["PROD"])
+    
+    # Feature views can be either dynamic tables or views, try both with their respective privileges
+    if object_type == "feature_view":
+        object_type_mapping = [
+            ("DYNAMIC TABLE", env_privileges.get("feature_view_dynamic_table", [])),
+            ("VIEW", env_privileges.get("feature_view_view", [])),
+        ]
+    else:
+        privileges = env_privileges.get(object_type, [])
+        if not privileges:
+            return
+        object_type_mapping = [(object_type.upper(), privileges)]
+    
+    for sql_object_type, privileges in object_type_mapping:
+        for role in PRIVILEGE_ROLES:
+            for privilege in privileges:
+                try:
+                    session.sql(f"""
+                        GRANT {privilege} ON {sql_object_type} {object_name} TO ROLE {role};
+                    """).collect()
+                except Exception as e:
+                    # Silently continue if object doesn't exist as this type
+                    if "does not exist" not in str(e).lower():
+                        print(f"Warning: Could not grant {privilege} on {sql_object_type} {object_name} to {role}: {e}")
+
 
 def _validate_warehouses(warehouse_configs: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
     """
@@ -118,7 +192,8 @@ def _create_warehouses(session: Session, warehouse_configs: Dict[str, Dict[str, 
     
     Creates warehouses using CREATE OR REPLACE to ensure the warehouse exists
     with the specified configuration. Returns the default warehouse name for
-    use in Feature Store initialization.
+    use in Feature Store initialization. Grants appropriate privileges based
+    on the current environment.
     
     Args:
         session (Session): Active Snowflake session
@@ -130,6 +205,7 @@ def _create_warehouses(session: Session, warehouse_configs: Dict[str, Dict[str, 
     
     Side Effects:
         Creates or replaces warehouses in Snowflake.
+        Grants privileges to ML_ENGINEER and EXTERNAL_SNOWFLAKE_ARCHITECTS roles.
     """
     default_warehouse = warehouse_configs.pop("_default")
     
@@ -141,6 +217,9 @@ def _create_warehouses(session: Session, warehouse_configs: Dict[str, Dict[str, 
             CREATE OR REPLACE WAREHOUSE {wh_name} {params_sql};
         """).collect()
         print(f"Created warehouse: {wh_name}")
+        
+        # Grant privileges based on environment
+        _grant_privileges(session, "warehouse", wh_name)
     
     return default_warehouse
 
@@ -344,6 +423,10 @@ if __name__ == "__main__":
         creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
     )
 
+    # Grant schema-level privileges based on environment
+    schema_name = f"{session.get_current_database()}.{session.get_current_schema()}"
+    _grant_privileges(session, "schema", schema_name)
+
     # Register all entities from configuration
     # Entities represent business objects (e.g., users, products) with join keys
     for e in config["entities"]:
@@ -371,6 +454,10 @@ if __name__ == "__main__":
         # Generate version hash based on feature view definition
         version = _version_featureview(fs,fv)
         fs.register_feature_view(fv, version=version)
+        
+        # Grant privileges on the feature view  based on environment
+        fv_full_name = f"{session.get_current_database()}.{session.get_current_schema()}.{fv_args['name']}${version}"
+        _grant_privileges(session, "feature_view", fv_full_name)
     
     session.close()
     print("Feature store setup complete!")

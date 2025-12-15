@@ -29,10 +29,10 @@ def get_model_schema(session: Session) -> str:
     return "SANDBOX" if session.get_current_database() == '"ML_COLLAB_DEV_DB"' else "MODELS"
 
 def get_build_stage(session: Session) -> str:
-    DB_NAME = session.get_current_database().replace('"','')
+    DB_NAME = session.get_current_database()
     return f"{DB_NAME}.{get_model_schema(session)}.BUILD_STAGE"
 
 
 def get_job_stage(session: Session) -> str:
-    DB_NAME = session.get_current_database().replace('"','')
+    DB_NAME = session.get_current_database()
     return f"{DB_NAME}.{get_model_schema(session)}.JOB_STAGE"

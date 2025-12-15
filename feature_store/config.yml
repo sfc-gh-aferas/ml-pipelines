@@ -22,5 +22,5 @@ feature_views:
     entities: example_entity
     timestamp_col: CREATED_AT
     desc: Example features for example entity
-    # warehouse: HEAVY_COMPUTE  # Optional: specify a non-default warehouse
+    #warehouse: HEAVY_COMPUTE  # Optional: specify a non-default warehouse
     #refresh_freq: 1 day
