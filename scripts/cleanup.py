@@ -233,7 +233,7 @@ def cleanup_entity(session: Session, entity_name: str, dry_run: bool = False) ->
     else:
         try:
             entity = fs.get_entity(entity_name)
-            fs.delete_entity(entity)
+            fs.delete_entity(entity_name)
             print(f"  ✅ Deleted entity {entity_name}")
         except Exception as e:
             # Entity might not exist or might have dependencies
