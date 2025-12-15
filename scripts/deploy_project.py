@@ -34,15 +34,12 @@ from snowflake.ml.jobs import submit_from_stage
 from snowflake.core.task.dagv1 import DAG, DAGTask, DAGOperation
 from snowflake.core.task.context import TaskContext
 from snowflake.core.task import Cron
-from january_ml.constants import (
-    ACCOUNT,
-    USER,
-    PASSWORD,
-    DB_NAME,
-    MODEL_SCHEMA,
+from january_ml.snowflake_env import (
     ENVIRONMENT,
-    BUILD_STAGE,
-    JOB_STAGE,
+    get_session,
+    get_model_schema,
+    get_build_stage,
+    get_job_stage,
 )
 
 def _wait_for_run_to_complete(session: Session, dag: DAG) -> str:
@@ -67,11 +64,11 @@ def _wait_for_run_to_complete(session: Session, dag: DAG) -> str:
     recent_runs = session.sql(
         f"""
         select run_id
-            from table({DB_NAME}.information_schema.current_task_graphs(
+            from table({session.get_current_database()}.information_schema.current_task_graphs(
                 root_task_name => '{dag.name.upper()}'
             ))
-            where database_name = '{DB_NAME}'
-            and schema_name = '{MODEL_SCHEMA}'
+            where database_name = '{session.get_current_database()}'
+            and schema_name = '{session.get_current_schema()}'
             and scheduled_from = 'EXECUTE TASK';
         """,
     ).collect()
@@ -86,11 +83,11 @@ def _wait_for_run_to_complete(session: Session, dag: DAG) -> str:
         result = session.sql(
             f"""
             select state
-                from table({DB_NAME}.information_schema.complete_task_graphs(
+                from table({session.get_current_database()}.information_schema.complete_task_graphs(
                     root_task_name=>'{dag.name.upper()}'
                 ))
-                where database_name = '{DB_NAME}'
-                and schema_name = '{MODEL_SCHEMA}'
+                where database_name = '{session.get_current_database()}'
+                and schema_name = '{session.get_current_schema()}'
                 and run_id = {run_id};
             """,
         ).collect()
@@ -125,6 +122,8 @@ def stage_directory(session: Session, project_dir: str) -> list[str]:
         list[str]: List of stage paths for all uploaded files (e.g., '@BUILD_STAGE/project/file.py')
     """
     # Create stages and remove previous project files
+    BUILD_STAGE = get_build_stage(session)
+    JOB_STAGE = get_job_stage(session)
     session.sql(f"CREATE STAGE IF NOT EXISTS {BUILD_STAGE}").collect()
     session.sql(f"REMOVE @{BUILD_STAGE}/{project_dir}").collect()
     session.sql(f"CREATE STAGE IF NOT EXISTS {JOB_STAGE}").collect()
@@ -172,12 +171,12 @@ def _deploy_notebook(session: Session, notebook_file: str, project_name: str) ->
     """
     # Create fully qualified notebook name with project namespace
     notebook_name = notebook_file.replace(".ipynb","")
-    fully_qualified_name = f"{DB_NAME}.{MODEL_SCHEMA}.{project_name}__{notebook_name}"
+    fully_qualified_name = f"{session.get_current_database()}.{session.get_current_schema()}.{project_name}__{notebook_name}"
     
     # Create notebook with runtime configuration
     nb_sql = f"""
         CREATE OR REPLACE NOTEBOOK {fully_qualified_name}
-        FROM @{BUILD_STAGE}/{project_name}
+        FROM @{get_build_stage(session)}/{project_name}
         MAIN_FILE = '{notebook_file}'
         QUERY_WAREHOUSE = {WAREHOUSE}
         RUNTIME_NAME = 'SYSTEM$BASIC_RUNTIME'
@@ -277,12 +276,13 @@ def _get_mljob_runner(filename: str, project_name: str, return_from_tasks: list 
         params = _get_return_vals(task_context=ctx, return_from_tasks=return_from_tasks, script_args=True)
             
         # Submit Python script as ML job with dependencies
+        BUILD_STAGE = get_build_stage(session)
         stage_path = f"@{BUILD_STAGE}/{project_name}"
         job = submit_from_stage(
             source=stage_path,
             compute_pool=COMPUTE_POOL,
             entrypoint=f"{filename}",
-            stage_name=JOB_STAGE,
+            stage_name={get_job_stage(session)},
             session=session,
             args=params,
             pip_requirements=["-r ../app/pip-requirements.txt"],
@@ -514,7 +514,7 @@ def create_dag(
         name=f"{project_name}_{dag_name}",
         schedule=schedule, 
         warehouse=WAREHOUSE, 
-        stage_location=JOB_STAGE,
+        stage_location=get_job_stage(session),
         packages=packages,
         imports=imports,
     ) as dag:
@@ -702,14 +702,11 @@ if __name__ == "__main__":
     config = yaml.safe_load(open(f"projects/{args.project_name}/config.yml","r"))
     dags = _validate_dags(config['deploy']['DAGS'])
     compute_resource_params = _validate_compute_resources(config['deploy'])
+
     # Initialize Snowflake session with configured connection
-    session = Session.builder.configs({
-        "user": USER,
-        "password": PASSWORD,
-        "account": ACCOUNT,
-        "database": DB_NAME,
-        "schema": MODEL_SCHEMA,
-    }).create()
+    # Use connection name if provided for local development, otherwise use user, password, and account
+    session = get_session()
+    session.use_schema(get_model_schema(session))
 
     # Create project-specific warehouse and compute pool (sets global WAREHOUSE and COMPUTE_POOL)
     _create_compute_resources(session, args.project_name, compute_resource_params)
@@ -720,8 +717,8 @@ if __name__ == "__main__":
 
     # Initialize Snowflake API objects for DAG operations
     api_root = Root(session)
-    db = api_root.databases[DB_NAME]
-    schema = db.schemas[MODEL_SCHEMA]
+    db = api_root.databases[session.get_current_database()]
+    schema = db.schemas[session.get_current_schema()]
     dag_op = DAGOperation(schema)
 
     # Deploy each DAG defined in the project configuration

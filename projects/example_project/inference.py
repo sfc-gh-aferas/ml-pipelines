@@ -13,6 +13,7 @@ def main(session: Session):
         creation_mode=CreationMode.CREATE_IF_NOT_EXIST
     )
 
+
     fv = fs.get_feature_view("EXAMPLE_FEATURES",version="1")
     df = fs.read_feature_view(fv).sample(n=100)
     X = df.select("HOUR")

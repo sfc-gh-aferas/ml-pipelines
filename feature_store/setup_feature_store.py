@@ -19,7 +19,7 @@ Configuration:
 """
 
 import yaml
-import feature_views
+import feature_views as feature_views
 import os
 from typing import Dict, Any
 from snowflake.snowpark import Session
@@ -30,13 +30,10 @@ from snowflake.ml.feature_store import (
     FeatureView,
 )
 import snowflake.snowpark.functions as F
-from january_ml.constants import (
-    ACCOUNT,
-    USER,
-    PASSWORD,
-    DB_NAME,
-    FEATURE_SCHEMA,
+from january_ml.snowflake_env import (
     ENVIRONMENT,
+    get_session,
+    get_feature_schema,
 )
 
 # Create environment-specific warehouse name for feature store operations
@@ -171,13 +168,11 @@ if __name__ == "__main__":
     config = yaml.safe_load(open("feature_store/config.yml","r"))
 
     # Initialize Snowflake session with configured connection
-    session = Session.builder.configs({
-        "user": USER,
-        "password": PASSWORD,
-        "account": ACCOUNT,
-        "database": DB_NAME,
-        "schema": FEATURE_SCHEMA,
-    }).create()
+    # Use connection name if provided for local development, otherwise use user, password, and account
+    session = get_session()
+    print(session.get_current_database())
+    print(get_feature_schema(session))
+    session.use_schema(get_feature_schema(session))
 
     # Create dedicated warehouse for feature store operations
     session.sql(f"""
@@ -189,8 +184,8 @@ if __name__ == "__main__":
     # Initialize Feature Store (creates necessary metadata tables)
     fs = FeatureStore(
         session,
-        database=DB_NAME,
-        name=FEATURE_SCHEMA,
+        database=session.get_current_database(),
+        name=session.get_current_schema(),
         default_warehouse=WAREHOUSE,
         creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
     )

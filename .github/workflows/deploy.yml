@@ -85,12 +85,12 @@ jobs:
           if [ -z "$changed_projects" ]; then
             echo "ℹ️  No project changes detected"
           fi
-      #- name: Deploy Feature Store
-      #  if: steps.changes.outputs.feature_store_changed == 'true'
-      #  run: |
-      #    echo "🚀 Deploying Feature Store to DEV environment..."
-      #    python scripts/setup_feature_store.py
-      #    echo "✅ Feature Store deployment complete"
+      - name: Deploy Feature Store
+        if: steps.changes.outputs.feature_store_changed == 'true'
+        run: |
+          echo "🚀 Deploying Feature Store to DEV environment..."
+          python feature_store/setup_feature_store.py
+          echo "✅ Feature Store deployment complete"
 
       - name: Deploy Changed Projects
         if: steps.changes.outputs.changed_projects != ''
@@ -103,7 +103,7 @@ jobs:
           # Deploy each changed project
           for project in "${PROJECTS[@]}"; do
             echo "📦 Deploying project: ${project}"
-            python scripts/deploy_project.py "${project}" --run-dag
+            python scripts/deploy_project.py "${project}"
             echo "✅ Project ${project} deployed successfully"
           done
           

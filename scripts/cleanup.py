@@ -5,13 +5,16 @@ This script removes all resources created for a given project:
   - Compute pool (PROJECT_ENVIRONMENT_COMPUTE)
   - Warehouse (PROJECT_ENVIRONMENT_WH)
   - Notebooks (project__notebook_name)
-  - DAGs/Tasks (project_dag_name)
+  - DAGs/Tasks (project_dag_name) including all child tasks in the DAG
   - Staged files in BUILD_STAGE and JOB_STAGE
 
 It can also clean up feature store resources:
   - Feature views (with all versions)
   - Entities (if no longer referenced)
   - Feature store warehouse
+
+When using --all flag, additionally removes:
+  - BUILD_STAGE and JOB_STAGE entirely
 
 Usage:
     python scripts/cleanup.py <project_name> [--dry-run]
@@ -104,23 +107,50 @@ def cleanup_notebooks(session: Session, project_name: str, dry_run: bool = False
 
 
 def cleanup_dags(session: Session, project_name: str, dag_names: list[str], dry_run: bool = False) -> None:
-    """Remove all DAGs/tasks associated with the project."""
+    """Remove all DAGs/tasks associated with the project, including child tasks."""
     db = session.get_current_database()
     schema = session.get_current_schema()
     
     for dag_name in dag_names:
         full_dag_name = f"{project_name}_{dag_name}"
         
-        # First suspend the task (root task of the DAG)
+        # First suspend the root task
         suspend_sql = f"ALTER TASK IF EXISTS {db}.{schema}.{full_dag_name} SUSPEND"
-        drop_sql = f"DROP TASK IF EXISTS {db}.{schema}.{full_dag_name}"
-        
         if dry_run:
             print(f"  [DRY RUN] Would execute: {suspend_sql}")
-            print(f"  [DRY RUN] Would execute: {drop_sql}")
         else:
             try:
                 session.sql(suspend_sql).collect()
+            except Exception as e:
+                print(f"  ⚠️  Could not suspend root task {full_dag_name}: {e}")
+        
+        # Find all child tasks (named {dag_name}${child_name})
+        try:
+            tasks = session.sql(f"""
+                SHOW TASKS LIKE '{full_dag_name}$%' IN SCHEMA {db}.{schema}
+            """).collect()
+            
+            # Delete child tasks first (reverse order to handle dependencies)
+            child_tasks = [t["name"] for t in tasks]
+            for child_task in reversed(child_tasks):
+                drop_child_sql = f"DROP TASK IF EXISTS {db}.{schema}.{child_task}"
+                if dry_run:
+                    print(f"  [DRY RUN] Would execute: {drop_child_sql}")
+                else:
+                    try:
+                        session.sql(drop_child_sql).collect()
+                        print(f"  ✅ Dropped child task {child_task}")
+                    except Exception as e:
+                        print(f"  ⚠️  Could not drop child task {child_task}: {e}")
+        except Exception as e:
+            print(f"  ⚠️  Could not list child tasks for {full_dag_name}: {e}")
+        
+        # Drop the root task
+        drop_sql = f"DROP TASK IF EXISTS {db}.{schema}.{full_dag_name}"
+        if dry_run:
+            print(f"  [DRY RUN] Would execute: {drop_sql}")
+        else:
+            try:
                 session.sql(drop_sql).collect()
                 print(f"  ✅ Dropped DAG/task {full_dag_name}")
             except Exception as e:
@@ -165,8 +195,12 @@ def cleanup_warehouse(session: Session, project_name: str, dry_run: bool = False
             print(f"  ⚠️  Could not drop warehouse {warehouse_name}: {e}")
 
 
-def cleanup_feature_view(session: Session, feature_name: str, dry_run: bool = False) -> None:
-    """Remove a feature view and all its versions from the feature store."""
+def cleanup_feature_view(session: Session, feature_name: str, dry_run: bool = False) -> bool:
+    """Remove a feature view and all its versions from the feature store.
+    
+    Returns:
+        bool: True if cleanup succeeded (or dry run), False if any error occurred.
+    """
     from snowflake.ml.feature_store import FeatureStore, CreationMode
     
     db = session.get_current_database()
@@ -183,20 +217,21 @@ def cleanup_feature_view(session: Session, feature_name: str, dry_run: bool = Fa
         )
     except Exception as e:
         print(f"  ⚠️  Could not initialize feature store: {e}")
-        return
+        return False
     
     # Find all versions of the feature view
     try:
         existing = fs.list_feature_views().filter(F.col("NAME") == feature_name.upper()).collect()
     except Exception as e:
         print(f"  ⚠️  Could not list feature views: {e}")
-        return
+        return False
     
     if not existing:
         print(f"  ℹ️  No feature view found with name: {feature_name}")
-        return
+        return True  # Not an error, just nothing to delete
     
     # Delete each version of the feature view
+    success = True
     for row in existing:
         version = row.VERSION
         if dry_run:
@@ -207,10 +242,17 @@ def cleanup_feature_view(session: Session, feature_name: str, dry_run: bool = Fa
                 print(f"  ✅ Deleted feature view {feature_name} version {version}")
             except Exception as e:
                 print(f"  ⚠️  Could not delete feature view {feature_name} version {version}: {e}")
+                success = False
+    
+    return success
 
 
-def cleanup_entity(session: Session, entity_name: str, dry_run: bool = False) -> None:
-    """Remove an entity from the feature store if it has no dependent feature views."""
+def cleanup_entity(session: Session, entity_name: str, dry_run: bool = False) -> bool:
+    """Remove an entity from the feature store if it has no dependent feature views.
+    
+    Returns:
+        bool: True if cleanup succeeded (or dry run), False if any error occurred.
+    """
     from snowflake.ml.feature_store import FeatureStore, CreationMode
     
     db = session.get_current_database()
@@ -226,18 +268,21 @@ def cleanup_entity(session: Session, entity_name: str, dry_run: bool = False) ->
         )
     except Exception as e:
         print(f"  ⚠️  Could not initialize feature store: {e}")
-        return
+        return False
     
     if dry_run:
         print(f"  [DRY RUN] Would delete entity {entity_name}")
+        return True
     else:
         try:
             entity = fs.get_entity(entity_name)
             fs.delete_entity(entity_name)
             print(f"  ✅ Deleted entity {entity_name}")
+            return True
         except Exception as e:
             # Entity might not exist or might have dependencies
             print(f"  ⚠️  Could not delete entity {entity_name}: {e}")
+            return False
 
 
 def cleanup_feature_store_warehouse(session: Session, dry_run: bool = False) -> None:
@@ -252,6 +297,23 @@ def cleanup_feature_store_warehouse(session: Session, dry_run: bool = False) -> 
             print(f"  ✅ Dropped warehouse {FEATURE_STORE_WAREHOUSE}")
         except Exception as e:
             print(f"  ⚠️  Could not drop warehouse {FEATURE_STORE_WAREHOUSE}: {e}")
+
+
+def cleanup_stages(session: Session, dry_run: bool = False) -> None:
+    """Remove BUILD_STAGE and JOB_STAGE entirely."""
+    BUILD_STAGE = get_build_stage(session)
+    JOB_STAGE = get_job_stage(session)
+    
+    for stage in [BUILD_STAGE, JOB_STAGE]:
+        sql = f"DROP STAGE IF EXISTS {stage}"
+        if dry_run:
+            print(f"  [DRY RUN] Would execute: {sql}")
+        else:
+            try:
+                session.sql(sql).collect()
+                print(f"  ✅ Dropped stage {stage}")
+            except Exception as e:
+                print(f"  ⚠️  Could not drop stage {stage}: {e}")
 
 
 def cleanup_project(session: Session, project_name: str, dry_run: bool = False) -> None:
@@ -286,9 +348,14 @@ def cleanup_project(session: Session, project_name: str, dry_run: bool = False) 
     cleanup_warehouse(session, project_name, dry_run)
 
 
-def cleanup_features(session: Session, feature_names: list[str], dry_run: bool = False) -> None:
-    """Clean up specified feature views and their associated entities."""
+def cleanup_features(session: Session, feature_names: list[str], dry_run: bool = False) -> bool:
+    """Clean up specified feature views and their associated entities.
+    
+    Returns:
+        bool: True if all cleanups succeeded, False if any error occurred.
+    """
     feature_config = load_feature_config()
+    all_success = True
     
     # Build lookup for feature views and their entities
     fv_to_entities = {}
@@ -309,7 +376,8 @@ def cleanup_features(session: Session, feature_names: list[str], dry_run: bool =
     print("  📊 Removing Feature Views...")
     for name in feature_names:
         if name in valid_features:
-            cleanup_feature_view(session, name, dry_run)
+            if not cleanup_feature_view(session, name, dry_run):
+                all_success = False
     
     # Collect entities that might need cleanup
     entities_to_check = set()
@@ -329,7 +397,10 @@ def cleanup_features(session: Session, feature_names: list[str], dry_run: bool =
     if entities_to_delete:
         print("  🏷️  Removing Entities (no longer in use)...")
         for entity_name in entities_to_delete:
-            cleanup_entity(session, entity_name, dry_run)
+            if not cleanup_entity(session, entity_name, dry_run):
+                all_success = False
+    
+    return all_success
 
 
 def main():
@@ -403,24 +474,36 @@ def main():
         # Clean up all features
         feature_config = load_feature_config()
         feature_names = [fv["name"] for fv in feature_config.get("feature_views", [])]
+        fs_cleanup_success = True
         
         if feature_names:
             print(f"\n📊 Cleaning up all features...")
             session.use_schema(get_feature_schema(session))
-            cleanup_features(session, feature_names, dry_run)
+            if not cleanup_features(session, feature_names, dry_run):
+                fs_cleanup_success = False
             
             # Clean up all entities
             entity_names = [e["name"] for e in feature_config.get("entities", [])]
             if entity_names:
                 print("\n🏷️  Removing all Entities...")
                 for entity_name in entity_names:
-                    cleanup_entity(session, entity_name, dry_run)
+                    if not cleanup_entity(session, entity_name, dry_run):
+                        fs_cleanup_success = False
             
-            # Clean up feature store warehouse
-            print("\n🏭 Removing Feature Store Warehouse...")
-            cleanup_feature_store_warehouse(session, dry_run)
+            # Clean up feature store warehouse only if all feature store resources were deleted
+            if fs_cleanup_success:
+                print("\n🏭 Removing Feature Store Warehouse...")
+                cleanup_feature_store_warehouse(session, dry_run)
+            else:
+                print("\n⚠️  Skipping Feature Store Warehouse deletion (feature store cleanup had errors)")
+                print("   Fix the issues and re-run cleanup to delete the warehouse.")
         else:
             print("ℹ️  No features found in feature_store/config.yml")
+
+        # Clean up BUILD_STAGE and JOB_STAGE
+        print("\n📦 Removing Build and Job Stages...")
+        session.use_schema(get_model_schema(session))
+        cleanup_stages(session, dry_run)
 
     # Handle --features flag
     elif args.features:
