@@ -52,7 +52,7 @@ jobs:
 
       - name: cleanup
         run: |
-          python scripts/cleanup.py example_project --dry-run
+          python scripts/cleanup.py --all --dry-run
 
       - name: Detect changed directories
         id: changes
@@ -85,12 +85,12 @@ jobs:
           if [ -z "$changed_projects" ]; then
             echo "ℹ️  No project changes detected"
           fi
-      - name: Deploy Feature Store
-        if: steps.changes.outputs.feature_store_changed == 'true'
-        run: |
-          echo "🚀 Deploying Feature Store to DEV environment..."
-          python scripts/setup_feature_store.py
-          echo "✅ Feature Store deployment complete"
+      #- name: Deploy Feature Store
+      #  if: steps.changes.outputs.feature_store_changed == 'true'
+      #  run: |
+      #    echo "🚀 Deploying Feature Store to DEV environment..."
+      #    python scripts/setup_feature_store.py
+      #    echo "✅ Feature Store deployment complete"
 
       - name: Deploy Changed Projects
         if: steps.changes.outputs.changed_projects != ''
