@@ -52,7 +52,7 @@ jobs:
 
       - name: cleanup
         run: |
-          python scripts/cleanup.py --all --dry-run
+          python scripts/cleanup.py --all
 
       - name: Detect changed directories
         id: changes
