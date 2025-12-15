@@ -16,6 +16,7 @@ def main(session: Session) -> dict:
         creation_mode=CreationMode.CREATE_IF_NOT_EXIST
     )
 
+
     fv = fs.get_feature_view("EXAMPLE_FEATURES",version="1")
     train = fs.read_feature_view(fv).sample(n=1000).select("HOUR","OPENED")
     test = fs.read_feature_view(fv).sample(n=100).select("HOUR","OPENED")

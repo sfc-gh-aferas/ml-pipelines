@@ -95,7 +95,7 @@ jobs:
         if: steps.changes.outputs.changed_projects != ''
         env:
           SNOWFLAKE_DATABASE: ML_COLLAB_DEV_DB
-          MODEL_SCHEMA: SANDBOX
+          SNOWFLAKE_MODEL_SCHEMA: SHARED_WORK
           SNOWFLAKE_ENVIRONMENT: DEV
         run: |
           echo "🚀 Deploying changed projects to DEV environment..."

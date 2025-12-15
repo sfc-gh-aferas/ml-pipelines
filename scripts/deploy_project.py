@@ -35,15 +35,14 @@ from snowflake.core.task.dagv1 import DAG, DAGTask, DAGOperation
 from snowflake.core.task.context import TaskContext
 from snowflake.core.task import Cron
 from january_ml.constants import (
-    CONNECTION,
+    ACCOUNT,
+    USER,
+    PASSWORD,
     DB_NAME,
     MODEL_SCHEMA,
-    ROLE_NAME,
     ENVIRONMENT,
-    #GIT_STAGE,
     BUILD_STAGE,
     JOB_STAGE,
-    # BRANCH,
 )
 
 def _wait_for_run_to_complete(session: Session, dag: DAG) -> str:
@@ -704,10 +703,13 @@ if __name__ == "__main__":
     dags = _validate_dags(config['deploy']['DAGS'])
     compute_resource_params = _validate_compute_resources(config['deploy'])
     # Initialize Snowflake session with configured connection
-    session = Session.builder.config("connection_name",CONNECTION).getOrCreate()
-    session.use_role(ROLE_NAME)
-    session.use_database(DB_NAME)
-    session.use_schema(MODEL_SCHEMA)
+    session = Session.builder.configs({
+        "user": USER,
+        "password": PASSWORD,
+        "account": ACCOUNT,
+        "database": DB_NAME,
+        "schema": MODEL_SCHEMA,
+    }).create()
 
     # Create project-specific warehouse and compute pool (sets global WAREHOUSE and COMPUTE_POOL)
     _create_compute_resources(session, args.project_name, compute_resource_params)
