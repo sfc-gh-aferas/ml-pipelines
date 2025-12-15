@@ -1,5 +1,6 @@
 # will need to have all elements needed to set up
 project_name: <PROJECT_NAME> # must match subdirectory
+active: False
 
 deploy:
   # Warehouse Configuration (OPTIONAL)

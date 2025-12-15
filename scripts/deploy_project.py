@@ -777,6 +777,11 @@ if __name__ == "__main__":
 
     # Load project configuration from YAML file and validate DAG definitions
     config = yaml.safe_load(open(f"projects/{args.project_name}/config.yml","r"))
+    config['active'] = config.get("active",False)
+    if not config['active']:
+        print(f"Project {args.project_name} is not active. Skipping deployment.")
+        exit(0)
+    
     dags = _validate_dags(config['deploy']['DAGS'])
     compute_resource_params = _validate_compute_resources(config['deploy'])
 
