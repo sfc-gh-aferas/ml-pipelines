@@ -732,9 +732,17 @@ def _create_compute_resources(session: Session, project_name: str, compute_resou
     global WAREHOUSE
     WAREHOUSE = f"{project_name}_{ENVIRONMENT}_WH"
     wh_sql = " ".join([f"{k} = {v}" for k,v in compute_resource_params["warehouse"].items()])
+    
+    # Create warehouse if it doesn't exist (preserves existing warehouse and its usage history)
     session.sql(f"""
-        CREATE OR REPLACE WAREHOUSE {WAREHOUSE} {wh_sql};
+        CREATE WAREHOUSE IF NOT EXISTS {WAREHOUSE};
     """).collect()
+    
+    # Update warehouse properties if any are specified
+    if wh_sql:
+        session.sql(f"""
+            ALTER WAREHOUSE {WAREHOUSE} SET {wh_sql};
+        """).collect()
     
     # Grant privileges on warehouse based on environment
     _grant_privileges(session, "warehouse", WAREHOUSE)
