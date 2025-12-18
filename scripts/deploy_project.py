@@ -853,4 +853,9 @@ if __name__ == "__main__":
             if result != "SUCCEEDED":
                 raise Exception(f"DAG {d.name} failed with result {result}")
 
+    # Suspend DAGs in non-PROD environments to prevent accidental execution
+    if ENVIRONMENT != "PROD":
+        for d in deployed_dags:
+            session.sql(f"ALTER TASK {session.get_current_database()}.{session.get_current_schema()}.{d.name} SUSPEND;").collect()
+
     session.close()

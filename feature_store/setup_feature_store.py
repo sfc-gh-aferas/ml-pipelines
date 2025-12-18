@@ -321,7 +321,7 @@ def _validate_featureview(
                 f"Available warehouses: {list(warehouse_mapping.keys())}"
             )
     else:
-        warehouse = default_warehouse
+        warehouse = None
     
     valid_dict = dict(
         name = feature_view_config["name"],
@@ -459,11 +459,15 @@ if __name__ == "__main__":
         )
         # Generate version hash based on feature view definition
         version = _version_featureview(fs,fv)
-        fs.register_feature_view(fv, version=version)
+        fv_reg = fs.register_feature_view(fv, version=version)
         
         # Grant privileges on the feature view  based on environment
         fv_full_name = f"{session.get_current_database()}.{session.get_current_schema()}.{fv_args['name']}${version}"
         _grant_privileges(session, "feature_view", fv_full_name)
+
+        # Suspend feature views in non-PROD environments to prevent accidental execution
+        if (ENVIRONMENT != "PROD") & (fv.warehouse is not None):
+            fs.suspend_feature_view(fv_reg)
     
     session.close()
     print("Feature store setup complete!")
