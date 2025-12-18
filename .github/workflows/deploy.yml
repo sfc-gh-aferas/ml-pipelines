@@ -9,14 +9,14 @@ on:
       - 'projects/**'
 
 jobs:
-  staging:
+  deploy:
     runs-on: ubuntu-latest
 
     env:
-      SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER}}
+      SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
       SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
-      SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD}}
-      SNOWFLAKE_ENVIRONMENT: STAGING
+      SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD }}
+      SNOWFLAKE_ENVIRONMENT: ${{ github.ref == 'refs/heads/main' && 'PROD' || 'STAGING' }}
 
     steps:
       - name: Checkout code
@@ -81,17 +81,18 @@ jobs:
           if [ -z "$changed_projects" ]; then
             echo "ℹ️  No project changes detected"
           fi
+
       - name: Deploy Feature Store
         if: steps.changes.outputs.feature_store_changed == 'true'
         run: |
-          echo "🚀 Deploying Feature Store to STAGING environment..."
+          echo "🚀 Deploying Feature Store to ${{ env.SNOWFLAKE_ENVIRONMENT }} environment..."
           python feature_store/setup_feature_store.py
           echo "✅ Feature Store deployment complete"
 
       - name: Deploy Changed Projects
         if: steps.changes.outputs.changed_projects != ''
         run: |
-          echo "🚀 Deploying changed projects to STAGING environment..."
+          echo "🚀 Deploying changed projects to ${{ env.SNOWFLAKE_ENVIRONMENT }} environment..."
           
           # Convert space-separated list to array
           IFS=' ' read -ra PROJECTS <<< "${{ steps.changes.outputs.changed_projects }}"
@@ -111,7 +112,7 @@ jobs:
           echo "## Deployment Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Environment:** STAGING" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:** ${{ env.SNOWFLAKE_ENVIRONMENT }}" >> $GITHUB_STEP_SUMMARY
           echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           

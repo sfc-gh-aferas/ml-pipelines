@@ -33,7 +33,6 @@ def main(session: Session, train_version: str, test_version: str) -> dict:
 
     # Register model
     reg = Registry(session=session)
-
     model_name = "MODEL_EX2"
     mv = reg.log_model(
         model=lr, 
