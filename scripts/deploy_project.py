@@ -148,7 +148,7 @@ def _wait_for_run_to_complete(session: Session, dag: DAG) -> str:
     while dag_result is None:
         result = session.sql(
             f"""
-            select state
+            select state, FIRST_ERROR_MESSAGE
                 from table({DB_NAME}.information_schema.complete_task_graphs(
                     root_task_name=>'{dag.name.upper()}'
                 ))
@@ -159,7 +159,9 @@ def _wait_for_run_to_complete(session: Session, dag: DAG) -> str:
         ).collect()
 
         if len(result) > 0:
-            dag_result = result[0][0]
+            dag_result = result[0].STATE
+            error_message = result[0].FIRST_ERROR_MESSAGE
+            print(error_message)
             print(
                 f"DAG completed after {(time.time() - start_time):.2f} seconds with result {dag_result}"
             )
