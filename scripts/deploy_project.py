@@ -765,6 +765,32 @@ def _create_compute_resources(session: Session, project_name: str, compute_resou
     # Grant privileges on compute pool based on environment
     _grant_privileges(session, "compute_pool", COMPUTE_POOL)
 
+def _deprecate_dags(session: Session, project_name: str, deployed_dags: list[dict]) -> None:
+    """
+    Deprecate DAGs that are not in config file.
+    
+    Args:
+        session: Snowflake session
+        project_name: Project name
+        dags: List of DAG configurations
+    """
+
+    project_dags = session.sql(f"""
+        SHOW TASKS LIKE '{project_name}%' IN SCHEMA {session.get_current_database()}.{session.get_current_schema()}
+    """).collect()
+
+    deployed_dag_names = [d.name.upper() for d in deployed_dags]
+
+    for d in project_dags:
+        if d.name.split('$')[0] not in deployed_dag_names:
+            session.sql(f"""
+                ALTER TASK {d.name} SUSPEND; 
+            """).collect()
+            session.sql(f"""
+                ALTER TASK {d.name} SET COMMENT = 'DEPRECATED: This DAG is no longer in the project configuration file.';
+            """).collect()
+            print(f"Suspended deprecated DAG {d.name}")
+
 if __name__ == "__main__":
 
     import argparse
@@ -854,6 +880,8 @@ if __name__ == "__main__":
             result = _wait_for_run_to_complete(session, d)
             if result != "SUCCEEDED":
                 raise Exception(f"DAG {d.name} failed with result {result}")
+
+    _deprecate_dags(session, args.project_name, deployed_dags)
 
     # Suspend DAGs in non-PROD environments to prevent accidental execution
     if ENVIRONMENT != "PROD":
