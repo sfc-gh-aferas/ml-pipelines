@@ -749,13 +749,16 @@ def _create_compute_resources(session: Session, project_name: str, compute_resou
 
     global COMPUTE_POOL
     COMPUTE_POOL = f"{project_name}_{ENVIRONMENT}_COMPUTE"
-    pool_exists = session.sql(f"SHOW COMPUTE POOLS LIKE '{COMPUTE_POOL}'").collect()
-    if pool_exists:
-        session.sql(f"DROP COMPUTE POOL {COMPUTE_POOL};").collect()
     cp_sql = " ".join([f"{k} = {v}" for k,v in compute_resource_params["compute_pool"].items()])
+
     session.sql(f"""
-        CREATE COMPUTE POOL {COMPUTE_POOL} {cp_sql};
+        CREATE COMPUTE POOL IF NOT EXISTS {COMPUTE_POOL} {cp_sql};
     """).collect()
+
+    if cp_sql:
+        session.sql(f"""
+            ALTER COMPUTE POOL {COMPUTE_POOL} SET {cp_sql};
+        """).collect()
     
     # Grant privileges on compute pool based on environment
     _grant_privileges(session, "compute_pool", COMPUTE_POOL)

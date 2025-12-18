@@ -213,10 +213,16 @@ def _create_warehouses(session: Session, warehouse_configs: Dict[str, Dict[str, 
         # Build SQL parameter string
         params_sql = " ".join([f"{k} = {v}" for k, v in wh_params.items()])
         
+        # Create warehouse if it doesn't exist (preserves existing warehouse and its usage history)
         session.sql(f"""
-            CREATE OR REPLACE WAREHOUSE {wh_name} {params_sql};
+            CREATE WAREHOUSE IF NOT EXISTS {wh_name};
         """).collect()
-        print(f"Created warehouse: {wh_name}")
+        
+        # Update warehouse properties if any are specified
+        if params_sql:
+            session.sql(f"""
+                ALTER WAREHOUSE {wh_name} SET {params_sql};
+            """).collect()
         
         # Grant privileges based on environment
         _grant_privileges(session, "warehouse", wh_name)
