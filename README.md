@@ -31,16 +31,19 @@ python -m build
 
 ### Configure Environment
 
-Set these environment variables for experimentation in the shared sandbox (or use `.env`):
+Set these environment variables for local development in the shared sandbox (or use `.env`):
 
 ```bash
-export SNOWFLAKE_CONNECTION="your_connection_name" # Name of the connection configured in connections.toml
-export SNOWFLAKE_ROLE="EXTERNAL_SNOWFLAKE_ARCHITECTS"
-export SNOWFLAKE_DATABASE="ML_COLLAB_DEV_DB"
-export FEATURE_SCHEMA="SANDBOX"
-export MODEL_SCHEMA="SANDBOX"
-export SNOWFLAKE_ENVIRONMENT="DEV"  # DEV, STAGE, or PROD
+export SNOWFLAKE_CONNECTION="your_connection_name" # Name of the connection configured in connections.toml. Connection should have role defined.
+export SNOWFLAKE_ENVIRONMENT="DEV"  # DEV for local, STAGING/PROD handled by CI/CD
 ```
+
+**Environment Overview:**
+| Environment | Database | Usage |
+|-------------|----------|-------|
+| `DEV` | `ML_COLLAB_DEV_DB` | Local development & experimentation |
+| `STAGING` | `ML_COLLAB_STAGING_DB` | CI/CD deploys from feature branches |
+| `PROD` | `ML_COLLAB_PROD_DB` | CI/CD deploys from main branch |
 
 ### Implement Feature Views
 
@@ -85,6 +88,7 @@ Edit `config.yml` to define your ML workflow:
 
 ```yaml
 project_name: my_project
+active: False # set to True to deploy the project
 
 deploy:
   DAGS:
@@ -197,14 +201,14 @@ feature_views:
 
 ## CI/CD Pipeline
 
-The GitHub Actions workflow automatically deploys changes to Snowflake.
+The GitHub Actions workflow automatically deploys changes to Snowflake with environment-aware deployments.
 
 ### Setup
 
 1. **Add GitHub Secrets** (Settings → Secrets and variables → Actions):
    - `SNOWFLAKE_ACCOUNT` - Your Snowflake account identifier
    - `SNOWFLAKE_USER` - Snowflake service user username
-   - `SNOWFLAKE_PRIVATE_KEY` - Private key content for JWT auth
+   - `SNOWFLAKE_PASSWORD` - Snowflake user password
 
 2. **Workflow triggers on push** to any branch when files change in:
    - `feature_store/` - Redeploys feature store
@@ -212,29 +216,40 @@ The GitHub Actions workflow automatically deploys changes to Snowflake.
 
 ### Deployment Flow
 
+The workflow dynamically determines the target environment based on the branch:
+
 ```
-┌─────────────────┐
-│  Push to Branch │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ GitHub Actions  │
-│  • Build pkg    │
-│  • Deploy FS    │
-│  • Deploy proj  │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ Snowflake DEV   │
-│  Environment    │
-└─────────────────┘
+┌─────────────────────┐
+│   Push to Branch    │
+└──────────┬──────────┘
+           │
+           ▼
+┌─────────────────────┐
+│   GitHub Actions    │
+│    • Build pkg      │
+│    • Detect changes │
+│    • Deploy FS      │
+│    • Deploy proj    │
+└──────────┬──────────┘
+           │
+     ┌─────┴─────┐
+     │           │
+     ▼           ▼
+┌─────────┐ ┌─────────┐
+│ Branch  │ │  main   │
+│ != main │ │ branch  │
+└────┬────┘ └────┬────┘
+     │           │
+     ▼           ▼
+┌─────────┐ ┌─────────┐
+│ STAGING │ │  PROD   │
+└─────────┘ └─────────┘
 ```
 
 **Environment Configuration:**
-- Changes deploy to DEV environment
-- Update workflow for STAGE/PROD environments as needed
+- **Feature branches** → Deploy to `STAGING` environment
+- **Merge to main** → Deploy to `PROD` environment
+- **Local development** → Use `DEV` environment (sandbox)
 
 ## Repository Structure
 
@@ -254,7 +269,8 @@ snowflake-ml-collaboration/
 ├── january_ml/            # Shared utilities package
 ├── scripts/
 │   ├── create_project.sh  # Create new project
-│   └── deploy_project.py  # Deploy to Snowflake
+│   ├── deploy_project.py  # Deploy to Snowflake
+│   └── cleanup.py         # Remove deployed resources
 └── dist/                  # Built packages
 ```
 
@@ -279,7 +295,9 @@ snowflake-ml-collaboration/
 - ✅ Document feature view purposes
 
 ### CI/CD
-- ✅ Test changes in DEV before promoting
+- ✅ Test changes locally in DEV environment
+- ✅ Push to feature branch → auto-deploys to STAGING
+- ✅ Merge to main → auto-deploys to PROD
 - ✅ Use `--run-dag` flag for smoke tests
 - ✅ Review DAG configurations in Snowflake UI
 - ✅ Monitor task execution history
@@ -309,11 +327,43 @@ python scripts/deploy_project.py my_project
 ```
 
 ### Delete a Project's Resources
-```sql
--- In Snowflake
-DROP TASK IF EXISTS MY_PROJECT_TRAINING_PIPELINE;
-DROP WAREHOUSE IF EXISTS MY_PROJECT_DEV_WH;
-DROP COMPUTE POOL IF EXISTS MY_PROJECT_DEV_COMPUTE;
+
+Use the cleanup script to remove all Snowflake resources for a project:
+
+```bash
+# Preview what would be deleted (recommended first step)
+python scripts/cleanup.py my_project --dry-run
+
+# Actually delete all resources for the project
+python scripts/cleanup.py my_project
+```
+
+This removes:
+- DAGs/Tasks (including all child tasks)
+- Notebooks
+- Staged files in BUILD_STAGE and JOB_STAGE
+- Compute pool
+- Warehouse
+
+### Delete Feature Store Resources
+
+```bash
+# Delete specific feature views
+python scripts/cleanup.py --features user_activity_features --dry-run
+python scripts/cleanup.py --features user_activity_features
+
+# Delete multiple feature views
+python scripts/cleanup.py --features feature1 feature2 feature3
+```
+
+### Delete All Resources
+
+```bash
+# Preview full cleanup
+python scripts/cleanup.py --all --dry-run
+
+# Delete everything: all projects, all features, and stages
+python scripts/cleanup.py --all
 ```
 
 ## Troubleshooting
