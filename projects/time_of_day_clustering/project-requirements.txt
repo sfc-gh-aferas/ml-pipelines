@@ -1,5 +1,0 @@
-./dist/january_ml-0.0.1-py3-none-any.whl
-dotenv
-snowflake-snowpark-python
-snowflake-ml-python
-scikit-learn

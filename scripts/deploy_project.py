@@ -15,7 +15,7 @@ Usage:
     python deploy_project.py <project_name> [--run-dag]
 
 Environment:
-    Requires Snowflake connection configuration via january_ml.constants module.
+    Requires Snowflake connection configuration via ml_utils.snowflake_env module.
 """
 import os
 import sys
@@ -34,16 +34,15 @@ from snowflake.ml.jobs import submit_from_stage
 from snowflake.core.task.dagv1 import DAG, DAGTask, DAGOperation
 from snowflake.core.task.context import TaskContext
 from snowflake.core.task import Cron
-from january_ml.snowflake_env import (
-    ENVIRONMENT,
+from ml_utils.snowflake_env import (
     get_session,
-    get_model_schema,
-    get_build_stage,
-    get_job_stage,
+    ENVIRONMENT,
+    BUILD_STAGE,
+    JOB_STAGE,
 )
 
 # Roles to grant privileges to
-PRIVILEGE_ROLES = ["ML_ENGINEER", "EXTERNAL_SNOWFLAKE_ARCHITECTS"]
+PRIVILEGE_ROLES = ["ACCOUNTADMIN"]
 
 # Privilege definitions based on environment
 # DEV: Full access for development and testing
@@ -126,7 +125,7 @@ def _wait_for_run_to_complete(session: Session, dag: DAG) -> str:
     # NOTE: We assume the most recent run is our run
     # It would be better to add some unique identifier to the DAG to make it easier to identify the run
     DB_NAME = session.get_current_database().replace('"','')
-    MODEL_SCHEMA = get_model_schema(session)
+    MODEL_SCHEMA = session.get_current_schema().replace('"','')
     recent_runs = session.sql(
         f"""
         select run_id
@@ -180,7 +179,7 @@ def stage_directory(session: Session, project_dir: str) -> list[str]:
     
     Creates two Snowflake stages (BUILD_STAGE, JOB_STAGE) if they don't exist,
     removes any previous project files from these stages, and uploads all files
-    from the project directory along with the january_ml package wheel.
+    from the project directory along with the ml_utils package wheel.
     Grants appropriate privileges based on the current environment.
     
     Args:
@@ -191,10 +190,6 @@ def stage_directory(session: Session, project_dir: str) -> list[str]:
         list[str]: List of stage paths for all uploaded files (e.g., '@BUILD_STAGE/project/file.py')
     """
     # Create stages and remove previous project files
-    global BUILD_STAGE
-    global JOB_STAGE
-    BUILD_STAGE = get_build_stage(session)
-    JOB_STAGE = get_job_stage(session)
     session.sql(f"CREATE STAGE IF NOT EXISTS {BUILD_STAGE}").collect()
     session.sql(f"REMOVE @{BUILD_STAGE}/{project_dir}").collect()
     session.sql(f"CREATE STAGE IF NOT EXISTS {JOB_STAGE}").collect()
@@ -212,9 +207,9 @@ def stage_directory(session: Session, project_dir: str) -> list[str]:
             result = session.file.put(filename,f"{BUILD_STAGE}/{project_dir}",overwrite=True, auto_compress=False)
             staged_files.append(f"@{BUILD_STAGE}/{project_dir}/{result[0].target}")
     
-    # Upload the january_ml package wheel file
+    # Upload the ml_utils package wheel file
     result = session.file.put(
-        "dist/january_ml-0.0.1-py3-none-any.whl",
+        "dist/ml_utils-0.0.1-py3-none-any.whl",
         f"{BUILD_STAGE}/{project_dir}/dist", 
         overwrite=True, 
         auto_compress=False
@@ -242,7 +237,7 @@ def _deploy_notebook(session: Session, notebook_file: str, project_name: str) ->
     """
     # Create fully qualified notebook name with project namespace
     notebook_name = notebook_file.replace(".ipynb","")
-    fully_qualified_name = f"{session.get_current_database()}.{get_model_schema(session)}.{project_name}__{notebook_name}"
+    fully_qualified_name = f"{session.get_current_database()}.{session.get_current_schema()}.{project_name}__{notebook_name}"
     
     # Create notebook with runtime configuration
     nb_sql = f"""
@@ -330,7 +325,7 @@ def _get_mljob_runner(filename: str, project_name: str, return_from_tasks: list 
     Returns a callable that submits a Python script from BUILD_STAGE as a Snowflake ML Job
     with dependencies and parameters from predecessor tasks. The job runs on the dynamically
     created COMPUTE_POOL with isolated container execution. Includes pip requirements from
-    the project's pip-requirements.txt and the january_ml package wheel.
+    the project's pip-requirements.txt and the ml_utils package wheel.
     
     Args:
         filename (str): Python script filename to execute (e.g., 'training.py')
@@ -356,7 +351,7 @@ def _get_mljob_runner(filename: str, project_name: str, return_from_tasks: list 
             session=session,
             args=params,
             pip_requirements=["-r ../app/pip-requirements.txt"],
-            imports=[f"@{BUILD_STAGE}/{project_name}/dist"]  # Include january_ml package
+            imports=[f"@{BUILD_STAGE}/{project_name}/dist"]  # Include ml_utils package
         )
         # Store and return job results for downstream tasks
         results = job.result() if job.result() else ""
@@ -371,7 +366,7 @@ def _get_func_runner(filename: str, return_from_tasks: list = []) -> Callable:
     
     Returns a callable that imports and runs a Python module's main() function
     with parameters from predecessor tasks. Used for lightweight Python tasks
-    that don't require ML Job submission. Adds the january_ml wheel to sys.path
+    that don't require ML Job submission. Adds the ml_utils wheel to sys.path
     and passes the Snowflake session to the module's main function.
     
     Args:
@@ -387,7 +382,7 @@ def _get_func_runner(filename: str, return_from_tasks: list = []) -> Callable:
     def func(session: Session) -> str:
         import_dir = sys._xoptions.get("snowflake_import_directory")
         # Add the name of the wheel file to the system path
-        sys.path.append(import_dir + 'january_ml-0.0.1-py3-none-any.whl')
+        sys.path.append(import_dir + 'ml_utils-0.0.1-py3-none-any.whl')
 
         ctx = TaskContext(session)
         # Get parameters as dictionary for **kwargs
@@ -827,8 +822,6 @@ if __name__ == "__main__":
     # Initialize Snowflake session with configured connection
     # Use connection name if provided for local development, otherwise use user, password, and account
     session = get_session()
-    session.use_schema(get_model_schema(session))
-
     # Create project-specific warehouse and compute pool (sets global WAREHOUSE and COMPUTE_POOL)
     _create_compute_resources(session, args.project_name, compute_resource_params)
     session.use_warehouse(WAREHOUSE)
@@ -857,7 +850,7 @@ if __name__ == "__main__":
             dag_name=d["name"],
             schedule=d["schedule"],
             tasks=d["tasks"],
-            imports=staged_files,  # All project files and january_ml wheel
+            imports=staged_files,  # All project files and ml_utils wheel
             packages=["snowflake-snowpark-python","snowflake-ml-python"]+d["conda_packages"],
         )
 

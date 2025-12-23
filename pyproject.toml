@@ -3,10 +3,10 @@ requires = ["setuptools >= 77.0.3"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "january_ml"
+name = "ml_utils"
 version = "0.0.1"
-description = "Internal utilities for January ML team"
-readme = "january_ml/README.md"
+description = "Internal utilities for ML"
+readme = "ml_utils/README.md"
 requires-python = ">=3.9"
 dependencies = [
     "snowflake-snowpark-python",
@@ -14,4 +14,4 @@ dependencies = [
 ]
 
 [tool.setuptools]
-packages = ["january_ml"]
+packages = ["ml_utils"]

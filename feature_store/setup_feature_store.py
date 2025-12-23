@@ -17,7 +17,7 @@ Usage:
 
 Configuration:
     Requires feature_store/config.yml with entities, warehouses, and feature_views definitions.
-    Requires Snowflake connection configuration via january_ml.constants module.
+    Requires Snowflake connection configuration via ml_utils.snowflake_env module.
 """
 
 import re
@@ -33,10 +33,9 @@ from snowflake.ml.feature_store import (
     FeatureView,
 )
 import snowflake.snowpark.functions as F
-from january_ml.snowflake_env import (
+from ml_utils.snowflake_env import (
     ENVIRONMENT,
     get_session,
-    get_feature_schema,
 )
 
 # Valid warehouse parameter names based on Snowflake SQL reference
@@ -414,7 +413,6 @@ if __name__ == "__main__":
     # Initialize Snowflake session with configured connection
     # Use connection name if provided for local development, otherwise use user, password, and account
     session = get_session()
-    session.use_schema(get_feature_schema(session))
 
     # Create all configured warehouses and get the default warehouse name
     default_warehouse = _create_warehouses(session, warehouse_configs)

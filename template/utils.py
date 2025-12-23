@@ -15,4 +15,4 @@ def get_stage_packages() -> None:
     ! pip install ./dist/january_ml-0.0.1-py3-none-any.whl #or ! pip install -r pip-requirements.txt
     """
     session = Session.builder.getOrCreate()
-    session.file.get(f"@BUILD_STAGE/template/dist/january_ml-0.0.1-py3-none-any.whl", "./dist")
+    session.file.get(f"@BUILD_STAGE/template/dist/ml_utils-0.0.1-py3-none-any.whl", "./dist")

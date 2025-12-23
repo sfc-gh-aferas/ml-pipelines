@@ -1,8 +1,7 @@
 from snowflake.snowpark.session import Session
 from snowflake.ml.dataset import Dataset
 from snowflake.ml.feature_store import FeatureStore, CreationMode
-from january_ml.utils import version_data
-from january_ml.snowflake_env import get_feature_schema
+from ml_utils.utils import version_data
 
 def main(session: Session) -> dict:
     
@@ -10,7 +9,7 @@ def main(session: Session) -> dict:
     fs = FeatureStore(
         session=session,
         database=session.get_current_database(),
-        name=get_feature_schema(session),
+        name=session.get_current_schema(),
         default_warehouse=session.get_current_warehouse(),
         creation_mode=CreationMode.CREATE_IF_NOT_EXIST
     )

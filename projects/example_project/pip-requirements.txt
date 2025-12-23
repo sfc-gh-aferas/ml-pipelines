@@ -1,4 +1,4 @@
-./dist/january_ml-0.0.1-py3-none-any.whl
+./dist/ml_utils-0.0.1-py3-none-any.whl
 snowflake-snowpark-python
 snowflake-ml-python
 scikit-learn

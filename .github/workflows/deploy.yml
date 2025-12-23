@@ -35,10 +35,10 @@ jobs:
           pip install -r requirements.txt
           pip install build
 
-      - name: Build and install january_ml package
+      - name: Build and install ml_utils package
         run: |
           python -m build
-          pip install dist/january_ml-*.whl
+          pip install dist/ml_utils-*.whl
 
       - uses: snowflakedb/snowflake-cli-action@v2.0
         with:

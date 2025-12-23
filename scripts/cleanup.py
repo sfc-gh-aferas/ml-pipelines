@@ -22,7 +22,7 @@ Usage:
     python scripts/cleanup.py --all [--dry-run]
 
 Environment:
-    Requires Snowflake connection configuration via january_ml.snowflake_env module.
+    Requires Snowflake connection configuration via ml_utils.snowflake_env module.
 """
 import os
 import re
@@ -30,13 +30,11 @@ import yaml
 import argparse
 from snowflake.snowpark.session import Session
 import snowflake.snowpark.functions as F
-from january_ml.snowflake_env import (
+from ml_utils.snowflake_env import (
     ENVIRONMENT,
     get_session,
-    get_model_schema,
-    get_feature_schema,
-    get_build_stage,
-    get_job_stage,
+    BUILD_STAGE,
+    JOB_STAGE,
 )
 
 
@@ -64,8 +62,6 @@ def get_all_project_names() -> list[str]:
 
 def cleanup_staged_files(session: Session, project_name: str, dry_run: bool = False) -> None:
     """Remove project files from BUILD_STAGE and JOB_STAGE."""
-    BUILD_STAGE = get_build_stage(session)
-    JOB_STAGE = get_job_stage(session)
     
     for stage in [BUILD_STAGE, JOB_STAGE]:
         sql = f"REMOVE @{stage}/{project_name}"
@@ -305,8 +301,6 @@ def cleanup_feature_store_warehouse(session: Session, dry_run: bool = False) -> 
 
 def cleanup_stages(session: Session, dry_run: bool = False) -> None:
     """Remove BUILD_STAGE and JOB_STAGE entirely."""
-    BUILD_STAGE = get_build_stage(session)
-    JOB_STAGE = get_job_stage(session)
     
     for stage in [BUILD_STAGE, JOB_STAGE]:
         sql = f"DROP STAGE IF EXISTS {stage}"
@@ -468,7 +462,6 @@ def main():
         project_names = get_all_project_names()
         if project_names:
             print("📁 Cleaning up all projects...")
-            session.use_schema(get_model_schema(session))
             for project_name in project_names:
                 print(f"\n🧹 Project: {project_name}")
                 cleanup_project(session, project_name, dry_run)
@@ -482,7 +475,6 @@ def main():
         
         if feature_names:
             print(f"\n📊 Cleaning up all features...")
-            session.use_schema(get_feature_schema(session))
             if not cleanup_features(session, feature_names, dry_run):
                 fs_cleanup_success = False
             
@@ -498,19 +490,16 @@ def main():
 
         # Clean up BUILD_STAGE and JOB_STAGE
         print("\n📦 Removing Build and Job Stages...")
-        session.use_schema(get_model_schema(session))
         cleanup_stages(session, dry_run)
 
     # Handle --features flag
     elif args.features:
         print(f"📊 Cleaning up features: {', '.join(args.features)}")
-        session.use_schema(get_feature_schema(session))
         cleanup_features(session, args.features, dry_run)
 
     # Handle project cleanup
     elif args.project_name:
         print(f"🧹 Cleaning up project: {args.project_name}")
-        session.use_schema(get_model_schema(session))
         cleanup_project(session, args.project_name, dry_run)
 
     print(f"\n{'=' * 60}")
