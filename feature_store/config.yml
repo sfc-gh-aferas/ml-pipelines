@@ -1,7 +1,7 @@
 entities:
-  - name: example_entity
+  - name: loan_example_entity
     join_keys: 
-      - BORROWERCOMM_UUID
+      - LOAN_ID
 
 # Warehouse configuration for feature store operations
 # One warehouse must be marked as 'default: true' for the feature store
@@ -19,8 +19,8 @@ warehouses:
 feature_views:
   - name: example_features
     function: create_example_features
-    entities: example_entity
-    timestamp_col: CREATED_AT
+    entities: loan_example_entity
+    timestamp_col: TIMESTAMP
     desc: Example features for example entity
     #warehouse: HEAVY_COMPUTE  # Optional: specify a non-default warehouse
     #refresh_freq: 1 day

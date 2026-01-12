@@ -16,7 +16,7 @@ jobs:
       SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
       SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
       SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD }}
-      SNOWFLAKE_ENVIRONMENT: ${{ github.ref == 'refs/heads/main' && 'PROD' || 'STAGING' }}
+      SNOWFLAKE_ENVIRONMENT: ${{ github.ref == 'refs/heads/main' && 'PROD' || 'DEV' }}
 
     steps:
       - name: Checkout code
@@ -89,22 +89,22 @@ jobs:
           python feature_store/setup_feature_store.py
           echo "✅ Feature Store deployment complete"
 
-      - name: Deploy Changed Projects
-        if: steps.changes.outputs.changed_projects != ''
-        run: |
-          echo "🚀 Deploying changed projects to ${{ env.SNOWFLAKE_ENVIRONMENT }} environment..."
+      #- name: Deploy Changed Projects
+      #  if: steps.changes.outputs.changed_projects != ''
+      #  run: |
+      #    echo "🚀 Deploying changed projects to ${{ env.SNOWFLAKE_ENVIRONMENT }} environment..."
+      #    
+      #    # Convert space-separated list to array
+      #    IFS=' ' read -ra PROJECTS <<< "${{ steps.changes.outputs.changed_projects }}"
           
-          # Convert space-separated list to array
-          IFS=' ' read -ra PROJECTS <<< "${{ steps.changes.outputs.changed_projects }}"
+      #    # Deploy each changed project
+      #    for project in "${PROJECTS[@]}"; do
+      #      echo "📦 Deploying project: ${project}"
+      #      python scripts/deploy_project.py "${project}" --run-dag
+      #      echo "✅ Project ${project} deployed successfully"
+      #    done
           
-          # Deploy each changed project
-          for project in "${PROJECTS[@]}"; do
-            echo "📦 Deploying project: ${project}"
-            python scripts/deploy_project.py "${project}" --run-dag
-            echo "✅ Project ${project} deployed successfully"
-          done
-          
-          echo "✅ All projects deployed successfully"
+      #    echo "✅ All projects deployed successfully"
 
       - name: Deployment Summary
         if: always()
