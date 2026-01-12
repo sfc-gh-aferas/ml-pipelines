@@ -23,4 +23,4 @@ feature_views:
     timestamp_col: TIMESTAMP
     desc: Example features for example entity
     #warehouse: HEAVY_COMPUTE  # Optional: specify a non-default warehouse
-    #refresh_freq: 1 day
+    refresh_freq: 1 day
