@@ -385,6 +385,9 @@ def _version_featureview(feature_store: FeatureStore, feature_view: FeatureView)
             if getattr(last_feature_view, k) != getattr(feature_view, k):
                 return str(last_version+1)
 
+        if getattr(last_feature_view, "refresh_freq") is None and getattr(feature_view, "refresh_freq") is not None:
+            return str(last_version+1)
+
         # For non-breaking metadata changes, update the existing version in-place
         # These changes don't affect the data schema, so no new version is needed
         metadata_keys = ["refresh_freq", "warehouse", "desc"]
