@@ -1,4 +1,4 @@
 # This file specifies packages needed for SPCS based tasks (container notebooks and mljobs)
-./dist/january_ml-0.0.1-py3-none-any.whl
+/tmp/dist/january_ml-0.0.1-py3-none-any.whl
 snowflake-snowpark-python
 snowflake-ml-python

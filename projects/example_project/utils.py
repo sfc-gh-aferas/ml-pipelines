@@ -1,7 +1,14 @@
 from snowflake.snowpark import Session
-import numpy as np
-import pandas as pd
+import os
+import sys
 
 def get_stage_packages():
     session = Session.builder.getOrCreate()
-    session.file.get("@BUILD_STAGE/example_project/dist/ml_utils-0.0.1-py3-none-any.whl", "./dist")
+    try:
+        idx = sys.argv.index("--snowflake-env") + 1
+        env = sys.argv[idx]
+    except ValueError:
+        env = "DEV"
+    os.environ["SNOWFLAKE_ENVIRONMENT"] = env
+    fq_schema = f"ML_{env}_DB.ML_{env}_SCHEMA"
+    session.file.get(f"@{fq_schema}.BUILD_STAGE/example_project/dist/ml_utils-0.0.1-py3-none-any.whl", "/tmp/dist")

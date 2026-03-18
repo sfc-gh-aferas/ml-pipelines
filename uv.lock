@@ -598,7 +598,7 @@ name = "exceptiongroup"
 version = "1.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.11'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/50/79/66800aadf48771f6b62f7eb014e352e5d06856655206165d775e675a02c9/exceptiongroup-1.3.1.tar.gz", hash = "sha256:8b412432c6055b0b7d14c310000ae93352ed6754f70fa8f7c34141f91c4e3219", size = 30371, upload-time = "2025-11-21T23:01:54.787Z" }
 wheels = [
@@ -939,12 +939,15 @@ name = "ml-utils"
 version = "0.0.1"
 source = { editable = "." }
 dependencies = [
+    { name = "snowflake-core", version = "1.8.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
+    { name = "snowflake-core", version = "1.12.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
     { name = "snowflake-ml-python" },
     { name = "snowflake-snowpark-python" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "snowflake-core" },
     { name = "snowflake-ml-python" },
     { name = "snowflake-snowpark-python" },
 ]
@@ -2583,6 +2586,54 @@ wheels = [
 pandas = [
     { name = "pandas" },
     { name = "pyarrow" },
+]
+
+[[package]]
+name = "snowflake-core"
+version = "1.8.0"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version < '3.10'",
+]
+dependencies = [
+    { name = "certifi", marker = "python_full_version < '3.10'" },
+    { name = "pydantic", marker = "python_full_version < '3.10'" },
+    { name = "python-dateutil", marker = "python_full_version < '3.10'" },
+    { name = "pyyaml", marker = "python_full_version < '3.10'" },
+    { name = "requests", marker = "python_full_version < '3.10'" },
+    { name = "snowflake-connector-python", marker = "python_full_version < '3.10'" },
+    { name = "urllib3", version = "1.26.20", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9a/39/34c84b238b16cbc2b81fa3f2fd4b590f1b1b572978401d2fcdad02001ede/snowflake_core-1.8.0.tar.gz", hash = "sha256:96d6f2c61a44bc72efa229c3a8cef2f4a5d4e2c756b00e01820c8147533a8bec", size = 837203, upload-time = "2025-09-22T11:33:08.933Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/7a/d3/6662cfc50021b2a346edee0228a4d2e16615153aaac3556e317f8e904317/snowflake_core-1.8.0-py3-none-any.whl", hash = "sha256:55ab1e9102f13f12af5b998010d128edd5c87ff80ef0bd3b8a2b973359f86319", size = 1415435, upload-time = "2025-09-22T11:33:06.692Z" },
+]
+
+[[package]]
+name = "snowflake-core"
+version = "1.12.0"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.13' and platform_machine == 'x86_64' and sys_platform == 'darwin'",
+    "python_full_version == '3.12.*' and platform_machine == 'x86_64' and sys_platform == 'darwin'",
+    "(python_full_version >= '3.13' and platform_machine != 'x86_64') or (python_full_version >= '3.13' and sys_platform != 'darwin')",
+    "(python_full_version == '3.12.*' and platform_machine != 'x86_64') or (python_full_version == '3.12.*' and sys_platform != 'darwin')",
+    "python_full_version == '3.11.*' and platform_machine == 'x86_64' and sys_platform == 'darwin'",
+    "(python_full_version == '3.11.*' and platform_machine != 'x86_64') or (python_full_version == '3.11.*' and sys_platform != 'darwin')",
+    "python_full_version == '3.10.*'",
+]
+dependencies = [
+    { name = "certifi", marker = "python_full_version >= '3.10'" },
+    { name = "pydantic", marker = "python_full_version >= '3.10'" },
+    { name = "python-dateutil", marker = "python_full_version >= '3.10'" },
+    { name = "pyyaml", marker = "python_full_version >= '3.10'" },
+    { name = "requests", marker = "python_full_version >= '3.10'" },
+    { name = "snowflake-connector-python", marker = "python_full_version >= '3.10'" },
+    { name = "urllib3", version = "2.6.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d0/6c/5e2e7509ff0529889eaae70c1f0f28d3060ed9a038f49e1bbcad542a59c0/snowflake_core-1.12.0.tar.gz", hash = "sha256:55c861753244b905db53f6a491914f349a8297a00611899473123a5a8786a747", size = 1057367, upload-time = "2026-02-12T12:04:06.945Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/23/06/cbc45192cd3cf9923af9d98cebf38ff3306f3fce1b111c83c01ce7dca44b/snowflake_core-1.12.0-py3-none-any.whl", hash = "sha256:810658267a777b421a51372efeccde3c38a7e6001e5bed363f03378a9c8f95a9", size = 1783628, upload-time = "2026-02-12T12:04:04.206Z" },
 ]
 
 [[package]]
