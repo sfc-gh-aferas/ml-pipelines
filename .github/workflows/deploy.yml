@@ -24,21 +24,18 @@ jobs:
         with:
           fetch-depth: 2  # Fetch previous commit for change detection
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: "Set up Python"
+        uses: actions/setup-python@v6
         with:
           python-version: '3.10'
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install build
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
 
-      - name: Build and install ml_utils package
+      - name: Install dependencies and build wheel
         run: |
-          python -m build
-          pip install dist/ml_utils-*.whl
+          uv sync --locked
+          uv build
 
       - uses: snowflakedb/snowflake-cli-action@v2.0
         with:
