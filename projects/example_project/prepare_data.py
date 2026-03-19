@@ -14,7 +14,6 @@ def main(session: Session) -> dict:
         creation_mode=CreationMode.CREATE_IF_NOT_EXIST
     )
 
-
     fv = fs.get_feature_view("EXAMPLE_FEATURES",version="1")
     train = fs.read_feature_view(fv).filter("INCOME IS NOT NULL").sample(n=1000).select("INCOME","MORTGAGERESPONSE")
     test = fs.read_feature_view(fv).filter("INCOME IS NOT NULL").sample(n=100).select("INCOME","MORTGAGERESPONSE")

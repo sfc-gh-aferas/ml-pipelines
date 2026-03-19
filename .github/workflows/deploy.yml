@@ -34,7 +34,7 @@ jobs:
 
       - name: Install dependencies and build wheel
         run: |
-          uv sync --locked
+          uv sync
           uv build
 
       - uses: snowflakedb/snowflake-cli-action@v2.0
