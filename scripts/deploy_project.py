@@ -301,7 +301,7 @@ def _get_notebook_sql(session:Session, fully_qualified_name: str, notebook_file:
     # Get parameters from predecessor tasks and format as SQL arguments
     params = _get_return_vals(task_context=ctx, return_from_tasks=return_from_tasks, script_args=True)
     params = params + ["--snowflake-env",ENVIRONMENT]
-    params = "'"+" ".join(params)+"'" if params else ""
+    params = " ".join(params) if params else ""
     nb_exec_sql = f"""
         EXECUTE NOTEBOOK PROJECT {fully_qualified_name}
             MAIN_FILE = '{notebook_file}'
@@ -721,7 +721,7 @@ def _create_compute_resources(session: Session, project_name: str, compute_resou
     project_name = re.sub(r"[^A-Z0-9]","_", project_name.upper())
 
     global WAREHOUSE
-    WAREHOUSE = f"{project_name}_{ENVIRONMENT}_WH"
+    WAREHOUSE = f"ML_PIPELINE_{project_name}_{ENVIRONMENT}_WH"
     wh_sql = " ".join([f"{k} = {v}" for k,v in compute_resource_params["warehouse"].items()])
     
     # Create warehouse if it doesn't exist (preserves existing warehouse and its usage history)
