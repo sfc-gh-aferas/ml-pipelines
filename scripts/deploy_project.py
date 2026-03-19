@@ -39,6 +39,9 @@ from ml_utils.snowflake_env import (
     ENVIRONMENT,
     BUILD_STAGE,
     JOB_STAGE,
+    ROLE_NAME,
+    DB_NAME,
+    SCHEMA_NAME
 )
 
 # Roles to grant privileges to
@@ -189,10 +192,8 @@ def stage_directory(session: Session, project_dir: str) -> list[str]:
     Returns:
         list[str]: List of stage paths for all uploaded files (e.g., '@BUILD_STAGE/project/file.py')
     """
-    # Create stages and remove previous project files
-    session.sql(f"CREATE STAGE IF NOT EXISTS {BUILD_STAGE}").collect()
+    # remove previous project files
     session.sql(f"REMOVE @{BUILD_STAGE}/{project_dir}").collect()
-    session.sql(f"CREATE STAGE IF NOT EXISTS {JOB_STAGE}").collect()
     session.sql(f"REMOVE @{JOB_STAGE}/{project_dir}").collect()
     
     # Grant privileges on stages based on environment
@@ -218,13 +219,11 @@ def stage_directory(session: Session, project_dir: str) -> list[str]:
     print(f"{project_dir} uploaded to {BUILD_STAGE}")
     return staged_files
 
-def _deploy_notebook(session: Session, notebook_file: str, project_name: str) -> str:
+def _deploy_notebook(session: Session, project_name: str) -> str:
     """
-    Deploy a Jupyter notebook to Snowflake as a Snowflake Notebook.
+    Deploy a notebook project.
     
-    Creates a Snowflake Notebook from a .ipynb file in BUILD_STAGE with configured
-    runtime, warehouse, and compute pool. Activates a live version for execution.
-    Uses dynamically created WAREHOUSE and COMPUTE_POOL global variables.
+    Creates a Snowflake Notebook Project from a directory in BUILD_STAGE.
     
     Args:
         session (Session): Active Snowflake session
@@ -236,24 +235,14 @@ def _deploy_notebook(session: Session, notebook_file: str, project_name: str) ->
     
     """
     # Create fully qualified notebook name with project namespace
-    notebook_name = notebook_file.replace(".ipynb","")
-    fully_qualified_name = f"{session.get_current_database()}.{session.get_current_schema()}.{project_name}__{notebook_name}"
+    fully_qualified_name = f"{session.get_current_database()}.{session.get_current_schema()}.{project_name}"
     
     # Create notebook with runtime configuration
     nb_sql = f"""
-        CREATE OR REPLACE NOTEBOOK {fully_qualified_name}
+        CREATE OR REPLACE NOTEBOOK PROJECT {fully_qualified_name}
         FROM @{BUILD_STAGE}/{project_name}
-        MAIN_FILE = '{notebook_file}'
-        QUERY_WAREHOUSE = {WAREHOUSE}
-        RUNTIME_NAME = 'SYSTEM$BASIC_RUNTIME'
-        COMPUTE_POOL = {COMPUTE_POOL}
-        IDLE_AUTO_SHUTDOWN_TIME_SECONDS = 3600;
     """
     results = session.sql(nb_sql).collect()
-
-    # Activate a live version of the notebook for execution
-    alter_sql = f"""ALTER NOTEBOOK {fully_qualified_name} ADD LIVE VERSION FROM LAST;"""
-    session.sql(alter_sql).collect()
 
     print(f"Successfully deployed notebook {fully_qualified_name}")
     return fully_qualified_name
@@ -294,11 +283,10 @@ def _get_return_vals(task_context: TaskContext, return_from_tasks: list, script_
                 kw.update(val)         
     return kw
 
-def _get_notebook_runner(fully_qualified_name: str, return_from_tasks: list = []) -> Callable:
+def _get_notebook_sql(session:Session, fully_qualified_name: str, notebook_file:str, return_from_tasks: list = []) -> Callable:
     """
-    Create a task function that executes a deployed Snowflake Notebook.
+    Create a SQL string executes a deployed Snowflake Notebook.
     
-    Returns a callable function that can be used as a DAG task definition.
     The function executes the notebook with parameters from predecessor tasks.
     Handles cases where no parameters are provided (executes with empty params).
     
@@ -309,14 +297,20 @@ def _get_notebook_runner(fully_qualified_name: str, return_from_tasks: list = []
     Returns:
         Callable: Function that executes the notebook when called with a session
     """
-    def nb_func(session: Session) -> str:
-        ctx = TaskContext(session)
-        # Get parameters from predecessor tasks and format as SQL arguments
-        params = _get_return_vals(task_context=ctx, return_from_tasks=return_from_tasks, script_args=True)
-        params = "'"+"','".join(params)+"'" if params else ""
-        return session.sql(f"EXECUTE NOTEBOOK {fully_qualified_name}({params});").collect()
-        
-    return nb_func
+    ctx = TaskContext(session)
+    # Get parameters from predecessor tasks and format as SQL arguments
+    params = _get_return_vals(task_context=ctx, return_from_tasks=return_from_tasks, script_args=True)
+    params = params + ["--snowflake-env",ENVIRONMENT]
+    params = " ".join(params) if params else ""
+    nb_exec_sql = f"""
+        EXECUTE NOTEBOOK PROJECT {fully_qualified_name}
+            MAIN_FILE = '{notebook_file}'
+            QUERY_WAREHOUSE = {WAREHOUSE}
+            RUNTIME = 'V2.3-CPU-PY3.10'
+            COMPUTE_POOL = {COMPUTE_POOL}
+            ARGUMENTS = '{params}';
+    """        
+    return nb_exec_sql
 
 def _get_mljob_runner(filename: str, project_name: str, return_from_tasks: list = []) -> Callable:
     """
@@ -350,8 +344,7 @@ def _get_mljob_runner(filename: str, project_name: str, return_from_tasks: list 
             stage_name=JOB_STAGE,
             session=session,
             args=params,
-            pip_requirements=["-r ../app/pip-requirements.txt"],
-            imports=[f"@{BUILD_STAGE}/{project_name}/dist"]  # Include ml_utils package
+            pip_requirements=["-r ../app/pip-requirements.txt", "../app/dist/ml_utils-0.0.1-py3-none-any.whl"],
         )
         # Store and return job results for downstream tasks
         results = job.result() if job.result() else ""
@@ -434,11 +427,12 @@ def _get_task_definition(
         # Deploy notebook to Snowflake and create runner
         fully_qualified_name = _deploy_notebook(
             session=session,
-            notebook_file=file, 
             project_name=project_name,
         )
-        task_func = _get_notebook_runner(
+        task_func = _get_notebook_sql(
+            session=session,
             fully_qualified_name=fully_qualified_name,
+            notebook_file=file,
             return_from_tasks=return_from_tasks,
         )
     elif filetype == ".py":
@@ -727,7 +721,7 @@ def _create_compute_resources(session: Session, project_name: str, compute_resou
     project_name = re.sub(r"[^A-Z0-9]","_", project_name.upper())
 
     global WAREHOUSE
-    WAREHOUSE = f"{project_name}_{ENVIRONMENT}_WH"
+    WAREHOUSE = f"ML_PIPELINE_{project_name}_{ENVIRONMENT}_WH"
     wh_sql = " ".join([f"{k} = {v}" for k,v in compute_resource_params["warehouse"].items()])
     
     # Create warehouse if it doesn't exist (preserves existing warehouse and its usage history)
@@ -745,9 +739,9 @@ def _create_compute_resources(session: Session, project_name: str, compute_resou
     _grant_privileges(session, "warehouse", WAREHOUSE)
 
     global COMPUTE_POOL
-    COMPUTE_POOL = f"{project_name}_{ENVIRONMENT}_COMPUTE"
+    COMPUTE_POOL = f"ML_PIPELINE_{project_name}_{ENVIRONMENT}_COMPUTE"
     cp_sql = " ".join([f"{k} = {v}" for k,v in compute_resource_params["compute_pool"].items()])
-
+        
     session.sql(f"""
         CREATE COMPUTE POOL IF NOT EXISTS {COMPUTE_POOL} {cp_sql};
     """).collect()
@@ -822,6 +816,10 @@ if __name__ == "__main__":
     # Initialize Snowflake session with configured connection
     # Use connection name if provided for local development, otherwise use user, password, and account
     session = get_session()
+    session.use_role(ROLE_NAME)
+    session.use_database(DB_NAME)
+    session.use_schema(SCHEMA_NAME)
+
     # Create project-specific warehouse and compute pool (sets global WAREHOUSE and COMPUTE_POOL)
     _create_compute_resources(session, args.project_name, compute_resource_params)
     session.use_warehouse(WAREHOUSE)

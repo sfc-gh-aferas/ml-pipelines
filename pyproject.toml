@@ -7,10 +7,12 @@ name = "ml_utils"
 version = "0.0.1"
 description = "Internal utilities for ML"
 readme = "ml_utils/README.md"
-requires-python = ">=3.9"
+requires-python = "==3.10.*"
 dependencies = [
     "snowflake-snowpark-python",
-    'snowflake-ml-python',
+    "snowflake-ml-python",
+    "snowflake-core",
+    "pyyaml",
 ]
 
 [tool.setuptools]
