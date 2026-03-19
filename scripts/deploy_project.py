@@ -39,6 +39,9 @@ from ml_utils.snowflake_env import (
     ENVIRONMENT,
     BUILD_STAGE,
     JOB_STAGE,
+    ROLE_NAME,
+    DB_NAME,
+    SCHEMA_NAME
 )
 
 # Roles to grant privileges to
@@ -189,10 +192,8 @@ def stage_directory(session: Session, project_dir: str) -> list[str]:
     Returns:
         list[str]: List of stage paths for all uploaded files (e.g., '@BUILD_STAGE/project/file.py')
     """
-    # Create stages and remove previous project files
-    session.sql(f"CREATE STAGE IF NOT EXISTS {BUILD_STAGE}").collect()
+    # remove previous project files
     session.sql(f"REMOVE @{BUILD_STAGE}/{project_dir}").collect()
-    session.sql(f"CREATE STAGE IF NOT EXISTS {JOB_STAGE}").collect()
     session.sql(f"REMOVE @{JOB_STAGE}/{project_dir}").collect()
     
     # Grant privileges on stages based on environment
@@ -738,9 +739,9 @@ def _create_compute_resources(session: Session, project_name: str, compute_resou
     _grant_privileges(session, "warehouse", WAREHOUSE)
 
     global COMPUTE_POOL
-    COMPUTE_POOL = f"{project_name}_{ENVIRONMENT}_COMPUTE"
+    COMPUTE_POOL = f"ML_PIPELINE_{project_name}_{ENVIRONMENT}_COMPUTE"
     cp_sql = " ".join([f"{k} = {v}" for k,v in compute_resource_params["compute_pool"].items()])
-
+        
     session.sql(f"""
         CREATE COMPUTE POOL IF NOT EXISTS {COMPUTE_POOL} {cp_sql};
     """).collect()
@@ -815,6 +816,10 @@ if __name__ == "__main__":
     # Initialize Snowflake session with configured connection
     # Use connection name if provided for local development, otherwise use user, password, and account
     session = get_session()
+    session.use_role(ROLE_NAME)
+    session.use_database(DB_NAME)
+    session.use_schema(SCHEMA_NAME)
+
     # Create project-specific warehouse and compute pool (sets global WAREHOUSE and COMPUTE_POOL)
     _create_compute_resources(session, args.project_name, compute_resource_params)
     session.use_warehouse(WAREHOUSE)

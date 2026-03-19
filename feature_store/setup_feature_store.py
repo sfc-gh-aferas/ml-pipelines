@@ -35,6 +35,9 @@ from snowflake.ml.feature_store import (
 import snowflake.snowpark.functions as F
 from ml_utils.snowflake_env import (
     ENVIRONMENT,
+    ROLE_NAME,
+    DB_NAME,
+    SCHEMA_NAME,
     get_session,
 )
 
@@ -413,6 +416,9 @@ if __name__ == "__main__":
     # Initialize Snowflake session with configured connection
     # Use connection name if provided for local development, otherwise use user, password, and account
     session = get_session()
+    session.use_role(ROLE_NAME)
+    session.use_database(DB_NAME)
+    session.use_schema(SCHEMA_NAME)
 
     # Create all configured warehouses and get the default warehouse name
     default_warehouse = _create_warehouses(session, warehouse_configs)

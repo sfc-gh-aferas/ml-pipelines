@@ -1,0 +1,126 @@
+name: Deploy to Snowflake
+
+on:
+  push:
+    branches:
+      - '**'  # Trigger on push to any branch
+    paths:
+      - 'feature_store/**'
+      - 'projects/**'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    env:
+      SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
+      SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+      SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD }}
+      SNOWFLAKE_ENVIRONMENT: ${{ github.ref == 'refs/heads/main' && 'PROD' || 'STAGING' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2  # Fetch previous commit for change detection
+
+      - name: "Set up Python"
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.10'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Install dependencies and build wheel
+        run: |
+          uv sync --locked
+          uv build
+
+      - uses: snowflakedb/snowflake-cli-action@v2.0
+        with:
+          default-config-file-path: "config.toml"
+
+        # Use the CLI
+      - name: Execute Snowflake CLI command
+        run: |
+          snow --help
+          snow connection test -x
+
+      - name: Detect changed directories
+        id: changes
+        run: |
+          # Check if feature_store directory changed
+          if git diff --name-only HEAD^ HEAD | grep -q '^feature_store/'; then
+            echo "feature_store_changed=true" >> $GITHUB_OUTPUT
+            echo "✅ Feature store changes detected"
+          else
+            echo "feature_store_changed=false" >> $GITHUB_OUTPUT
+            echo "ℹ️  No feature store changes"
+          fi
+          
+          # Detect changed projects and create a space-separated list
+          changed_projects=""
+          for project_dir in projects/*/; do
+            if [ -d "$project_dir" ]; then
+              project_name=$(basename "$project_dir")
+              if git diff --name-only HEAD^ HEAD | grep -q "^projects/${project_name}/"; then
+                changed_projects="${changed_projects}${project_name} "
+                echo "✅ Project changed: ${project_name}"
+              fi
+            fi
+          done
+          
+          # Remove trailing space and save
+          changed_projects=$(echo "$changed_projects" | xargs)
+          echo "changed_projects=${changed_projects}" >> $GITHUB_OUTPUT
+          
+          if [ -z "$changed_projects" ]; then
+            echo "ℹ️  No project changes detected"
+          fi
+
+      - name: Deploy Feature Store
+        if: steps.changes.outputs.feature_store_changed == 'true'
+        run: |
+          echo "🚀 Deploying Feature Store to ${{ env.SNOWFLAKE_ENVIRONMENT }} environment..."
+          python feature_store/setup_feature_store.py
+          echo "✅ Feature Store deployment complete"
+
+      - name: Deploy Changed Projects
+        if: steps.changes.outputs.changed_projects != ''
+        run: |
+          echo "🚀 Deploying changed projects to ${{ env.SNOWFLAKE_ENVIRONMENT }} environment..."
+          
+          # Convert space-separated list to array
+          IFS=' ' read -ra PROJECTS <<< "${{ steps.changes.outputs.changed_projects }}"
+          
+          # Deploy each changed project
+          for project in "${PROJECTS[@]}"; do
+            echo "📦 Deploying project: ${project}"
+            python scripts/deploy_project.py "${project}" --run-dag
+            echo "✅ Project ${project} deployed successfully"
+          done
+          
+          echo "✅ All projects deployed successfully"
+
+      - name: Deployment Summary
+        if: always()
+        run: |
+          echo "## Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:** ${{ env.SNOWFLAKE_ENVIRONMENT }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ steps.changes.outputs.feature_store_changed }}" == "true" ]; then
+            echo "- ✅ Feature Store deployed" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- ⏭️  Feature Store (no changes)" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [ -n "${{ steps.changes.outputs.changed_projects }}" ]; then
+            echo "- ✅ Projects deployed: ${{ steps.changes.outputs.changed_projects }}" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- ⏭️  Projects (no changes)" >> $GITHUB_STEP_SUMMARY
+          fi

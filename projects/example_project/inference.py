@@ -14,8 +14,8 @@ def main(session: Session):
 
 
     fv = fs.get_feature_view("EXAMPLE_FEATURES",version="1")
-    df = fs.read_feature_view(fv).sample(n=100)
-    X = df.select("HOUR")
+    df = fs.read_feature_view(fv).filter("INCOME IS NOT NULL").sample(n=100)
+    X = df.select("INCOME")
 
     reg = Registry(session=session)
 
@@ -25,6 +25,5 @@ def main(session: Session):
     pred = model.run(X,function_name='predict')
 
     pred.write.save_as_table("TEST_MODEL_PREDICTIONS",mode="overwrite")
-
 
 

@@ -15,9 +15,9 @@ def main(session: Session) -> dict:
     )
 
 
-    fv = fs.get_feature_view("EXAMPLE_FEATURES",version="3")
-    train = fs.read_feature_view(fv).sample(n=1000).select("INCOME","MORTGAGERESPONSE")
-    test = fs.read_feature_view(fv).sample(n=100).select("INCOME","MORTGAGERESPONSE")
+    fv = fs.get_feature_view("EXAMPLE_FEATURES",version="1")
+    train = fs.read_feature_view(fv).filter("INCOME IS NOT NULL").sample(n=1000).select("INCOME","MORTGAGERESPONSE")
+    test = fs.read_feature_view(fv).filter("INCOME IS NOT NULL").sample(n=100).select("INCOME","MORTGAGERESPONSE")
 
     # Save as datasets
     ds_name = "TRAIN_DATASET"

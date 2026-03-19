@@ -4,7 +4,7 @@ from datetime import datetime
 
 def create_example_features(session: Session) -> DataFrame:
 
-    df = session.table("MORTGAGE_LENDING_DEMO_DATA")
+    df = session.table("BASE_DATA.MORTGAGE_LENDING_DEMO_DATA")
 
     #Get current date and time
     current_time = datetime.now()

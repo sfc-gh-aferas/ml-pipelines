@@ -6,6 +6,8 @@ deploy:
   warehouse:
     warehouse_size: SMALL
     auto_suspend: 300
+  compute_pool:
+    instance_family: CPU_X64_XS
   DAGS:
     - name: EXAMPLE1
       tasks:
