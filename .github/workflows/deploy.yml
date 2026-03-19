@@ -24,28 +24,16 @@ jobs:
         with:
           fetch-depth: 2  # Fetch previous commit for change detection
 
-      - name: "Set up Python"
-        uses: actions/setup-python@v6
-        with:
-          python-version: '3.10'
-
       - name: Install uv
         uses: astral-sh/setup-uv@v7
 
+      - name: Set up Python
+        run: uv python install
+
       - name: Install dependencies and build wheel
         run: |
-          uv sync
+          uv sync --locked
           uv build
-
-      - uses: snowflakedb/snowflake-cli-action@v2.0
-        with:
-          default-config-file-path: "config.toml"
-
-        # Use the CLI
-      - name: Execute Snowflake CLI command
-        run: |
-          snow --help
-          snow connection test -x
 
       - name: Detect changed directories
         id: changes
@@ -83,7 +71,7 @@ jobs:
         if: steps.changes.outputs.feature_store_changed == 'true'
         run: |
           echo "🚀 Deploying Feature Store to ${{ env.SNOWFLAKE_ENVIRONMENT }} environment..."
-          uv run python feature_store/setup_feature_store.py
+          uv run --python 3.10 python feature_store/setup_feature_store.py
           echo "✅ Feature Store deployment complete"
 
       - name: Deploy Changed Projects
@@ -97,7 +85,7 @@ jobs:
           # Deploy each changed project
           for project in "${PROJECTS[@]}"; do
             echo "📦 Deploying project: ${project}"
-            uv run python scripts/deploy_project.py "${project}" --run-dag
+            uv run --python 3.10 python scripts/deploy_project.py "${project}" --run-dag
             echo "✅ Project ${project} deployed successfully"
           done
           
