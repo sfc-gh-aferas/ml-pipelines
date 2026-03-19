@@ -1,9 +1,7 @@
 from sklearn.linear_model import LogisticRegression
-
 from snowflake.snowpark.session import Session
 from snowflake.ml.registry import Registry
 from snowflake.ml.dataset import Dataset
-
 from argparse import ArgumentParser
 
 def main(session: Session, train_version: str, test_version: str) -> dict:

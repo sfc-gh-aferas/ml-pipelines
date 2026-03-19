@@ -83,7 +83,7 @@ jobs:
         if: steps.changes.outputs.feature_store_changed == 'true'
         run: |
           echo "🚀 Deploying Feature Store to ${{ env.SNOWFLAKE_ENVIRONMENT }} environment..."
-          python feature_store/setup_feature_store.py
+          uv run python feature_store/setup_feature_store.py
           echo "✅ Feature Store deployment complete"
 
       - name: Deploy Changed Projects
@@ -97,7 +97,7 @@ jobs:
           # Deploy each changed project
           for project in "${PROJECTS[@]}"; do
             echo "📦 Deploying project: ${project}"
-            python scripts/deploy_project.py "${project}" --run-dag
+            uv run python scripts/deploy_project.py "${project}" --run-dag
             echo "✅ Project ${project} deployed successfully"
           done
           
