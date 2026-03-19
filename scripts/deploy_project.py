@@ -343,8 +343,7 @@ def _get_mljob_runner(filename: str, project_name: str, return_from_tasks: list 
             stage_name=JOB_STAGE,
             session=session,
             args=params,
-            pip_requirements=["-r ../app/pip-requirements.txt"],
-            imports=[f"@{BUILD_STAGE}/{project_name}/dist"]  # Include ml_utils package
+            pip_requirements=["-r ../app/pip-requirements.txt", "../app/dist/ml_utils-0.0.1-py3-none-any.whl"],
         )
         # Store and return job results for downstream tasks
         results = job.result() if job.result() else ""
