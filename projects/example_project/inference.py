@@ -23,7 +23,6 @@ def main(session: Session):
     model = reg.get_model(model_name).default
 
     pred = model.run(X,function_name='predict')
-
     pred.write.save_as_table("TEST_MODEL_PREDICTIONS",mode="overwrite")
 
 

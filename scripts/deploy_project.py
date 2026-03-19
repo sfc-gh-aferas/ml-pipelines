@@ -301,7 +301,7 @@ def _get_notebook_sql(session:Session, fully_qualified_name: str, notebook_file:
     # Get parameters from predecessor tasks and format as SQL arguments
     params = _get_return_vals(task_context=ctx, return_from_tasks=return_from_tasks, script_args=True)
     params = params + ["--snowflake-env",ENVIRONMENT]
-    params = "'"+"','".join(params)+"'" if params else ""
+    params = "'"+" ".join(params)+"'" if params else ""
     nb_exec_sql = f"""
         EXECUTE NOTEBOOK PROJECT {fully_qualified_name}
             MAIN_FILE = '{notebook_file}'
