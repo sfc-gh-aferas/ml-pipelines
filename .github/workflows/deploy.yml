@@ -13,10 +13,10 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
-      SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
-      SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD }}
       SNOWFLAKE_ENVIRONMENT: ${{ github.ref == 'refs/heads/main' && 'PROD' || 'STAGING' }}
+      SNOWFLAKE_USER: ${{ github.ref == 'refs/heads/main' && secrets.SNOWFLAKE_PROD_USER || secrets.SNOWFLAKE_STAGING_USER }}
+      SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+      SNOWFLAKE_PASSWORD: ${{ github.ref == 'refs/heads/main' && secrets.SNOWFLAKE_PROD_PASSWORD || secrets.SNOWFLAKE_STAGING_PASSWORD }}
 
     steps:
       - name: Checkout code

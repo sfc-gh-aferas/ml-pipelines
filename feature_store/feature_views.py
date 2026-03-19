@@ -17,7 +17,6 @@ def create_example_features(session: Session) -> DataFrame:
     df.select(F.min(F.date_add(F.to_timestamp("TS"), timedelta.days-1)), F.max(F.date_add(F.to_timestamp("TS"), timedelta.days-1)))
 
     #Create a dict with keys for feature names and values containing transform code
-
     feature_eng_dict = dict()
 
     #Timstamp features
