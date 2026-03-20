@@ -7,7 +7,7 @@ import os
 import sys
 import subprocess
 
-def install_stage_package(): -> None:
+def install_stage_package() -> None:
     """
     Helper function for Snowflake notebooks to get the january_ml package from the BUILD_STAGE.
 

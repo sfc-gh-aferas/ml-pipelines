@@ -5,389 +5,361 @@ A production-ready framework for deploying and managing machine learning workflo
 ## Overview
 
 This framework enables teams to:
-- 🚀 **Deploy ML workflows** as scheduled Snowflake DAGs
-- 🗄️ **Manage features** with versioned feature store
-- 🔄 **Automate deployments** via GitHub Actions CI/CD
-- 📦 **Share utilities** through the `january_ml` package
+- Deploy ML workflows as scheduled Snowflake DAGs (Tasks)
+- Manage features with a versioned feature store
+- Automate deployments via GitHub Actions CI/CD
+- Share utilities through the `ml_utils` package
 
-## Quick Start
+## Getting Started
+
+This repo is intended to be used as an example. **Copy this directory into your own repository** before running any GitHub Actions or making modifications. The CI/CD workflow is self-contained and will work once you configure the required secrets in your repo.
 
 ### Prerequisites
-- Python 3.10+
-- Snowflake account with appropriate permissions
-- Snowflake connection configured locally
+- Python 3.10
+- A Snowflake account with ACCOUNTADMIN access (for initial setup)
+- [uv](https://docs.astral.sh/uv/) package manager
+- A Snowflake connection configured in `~/.snowflake/connections.toml`
 
 ### Installation
 
 ```bash
-# Clone and install dependencies
-git clone https://github.com/your-org/snowflake-ml-collaboration.git
-cd snowflake-ml-collaboration
-pip install -r requirements.txt
-
-# Build shared package
-python -m build
+# Install dependencies and build the shared ml_utils package
+uv sync --locked
+uv build
 ```
 
-### Configure Environment
+---
 
-Set these environment variables for local development in the shared sandbox (or use `.env`):
+## Environment Setup
+
+The framework uses three isolated environments. Each environment has its own database, role, warehouses, and service users.
+
+| Environment | Database | Role | Usage |
+|-------------|----------|------|-------|
+| `DEV` | `ML_PIPELINE_DEV_DB` | `ML_PIPELINE_DEV_ROLE` | Local development and experimentation |
+| `STAGING` | `ML_PIPELINE_STAGING_DB` | `ML_PIPELINE_STAGING_ROLE` | CI/CD deploys from feature branches |
+| `PROD` | `ML_PIPELINE_PROD_DB` | `ML_PIPELINE_PROD_ROLE` | CI/CD deploys from main branch |
+
+### Creating DEV, STAGING, and PROD Environments
+
+The `setup/setup.sql` script creates all required Snowflake resources for a given environment. Run it three times, once per environment, replacing the `<% env %>` placeholder with `DEV`, `STAGING`, or `PROD`.
+
+For each environment the script will:
+- Create the environment role (`ML_PIPELINE_<env>_ROLE`) and grant it required account-level privileges
+- Grant the role to the current user
+- Create the database (`ML_PIPELINE_<env>_DB`) with `BASE_DATA` and `ML_PROJECTS` schemas
+- Create `DATA_STAGE`, `BUILD_STAGE`, and `JOB_STAGE` stages
+- Create a default XS warehouse
+- Create a service user (`GIT_ACTIONS_<env>`) for CI/CD automation
+- Load the included demo dataset (`MORTGAGE_LENDING_DEMO_DATA`)
+
+**Steps:**
+
+Use the [Snowflake CLI](https://docs.snowflake.com/en/developer-guide/snowflake-cli/index) (`snow sql`) to execute the setup script. The `-D` flag substitutes the `<% env %>` template variable:
 
 ```bash
-export SNOWFLAKE_CONNECTION="your_connection_name" # Name of the connection configured in connections.toml. Connection should have role defined.
-export SNOWFLAKE_ENVIRONMENT="DEV"  # DEV for local, STAGING/PROD handled by CI/CD
+# Create the DEV environment
+snow sql -f setup/setup.sql -D "env=DEV" -c <your_connection>
+
+# Create the STAGING environment
+snow sql -f setup/setup.sql -D "env=STAGING" -c <your_connection>
+
+# Create the PROD environment
+snow sql -f setup/setup.sql -D "env=PROD" -c <your_connection>
 ```
 
-**Environment Overview:**
-| Environment | Database | Usage |
-|-------------|----------|-------|
-| `DEV` | `ML_COLLAB_DEV_DB` | Local development & experimentation |
-| `STAGING` | `ML_COLLAB_STAGING_DB` | CI/CD deploys from feature branches |
-| `PROD` | `ML_COLLAB_PROD_DB` | CI/CD deploys from main branch |
+Replace `<your_connection>` with the name of a connection in `~/.snowflake/connections.toml` that has ACCOUNTADMIN access.
 
-### Implement Feature Views
+---
 
-Add feature generation functions in `feature_store/feature_views.py`:
+## Creating PATs and Configuring GitHub Secrets
 
-```python
-from snowflake.snowpark import Session, DataFrame
+The CI/CD pipeline authenticates to Snowflake using the `GIT_ACTIONS_STAGING` and `GIT_ACTIONS_PROD` service users. You need to generate a Programmatic Access Token (PAT) for each.
 
-def create_user_features(session: Session) -> DataFrame:
-    """Generate user activity features."""
-    df = session.table('USER_EVENTS')
-    # Feature engineering logic. Must return Snowpark Dataframe.
-    return df.select("USER_ID", "CREATED_AT", "FEATURE1", "FEATURE2")
+### 1. Generate PATs in Snowflake
+
+For each service user (`GIT_ACTIONS_STAGING` and `GIT_ACTIONS_PROD`), generate a password or PAT:
+
+```sql
+-- As ACCOUNTADMIN or USERADMIN
+ALTER USER GIT_ACTIONS_STAGING SET PASSWORD = '<strong-password>';
+ALTER USER GIT_ACTIONS_PROD SET PASSWORD = '<strong-password>';
 ```
 
-### Deploy Feature Store
+Or, if using key-pair authentication, generate and assign RSA keys per Snowflake documentation.
+
+### 2. Add GitHub Secrets
+
+In your GitHub repository, go to **Settings > Secrets and variables > Actions** and add the following secrets:
+
+| Secret Name | Value |
+|---|---|
+| `SNOWFLAKE_ACCOUNT` | Your Snowflake account identifier (e.g. `myorg-myaccount`) |
+| `SNOWFLAKE_STAGING_USER` | `GIT_ACTIONS_STAGING` |
+| `SNOWFLAKE_STAGING_PASSWORD` | Password/PAT for the STAGING service user |
+| `SNOWFLAKE_PROD_USER` | `GIT_ACTIONS_PROD` |
+| `SNOWFLAKE_PROD_PASSWORD` | Password/PAT for the PROD service user |
+
+The deploy workflow (`.github/workflows/deploy.yml`) automatically selects the correct user and password based on the branch:
+- **Push to `main`** uses `SNOWFLAKE_PROD_USER` / `SNOWFLAKE_PROD_PASSWORD`
+- **Push to any other branch** uses `SNOWFLAKE_STAGING_USER` / `SNOWFLAKE_STAGING_PASSWORD`
+
+---
+
+## Local Development
+
+Set these environment variables for local development:
+
+```bash
+export SNOWFLAKE_CONNECTION="your_connection_name"  # From connections.toml (connection must have role defined)
+export SNOWFLAKE_ENVIRONMENT="DEV"
+```
+
+### Deploy Feature Store Locally
 
 ```bash
 python feature_store/setup_feature_store.py
 ```
 
-Features are automatically versioned based on their definition, enabling reproducibility and lineage tracking. This versioning (using january_ml.utils.version_featureview) allows the pipeline to only re-compute historical data if there have been changes to the definition. If there are no changes, initialization will be skipped.
+This registers entities and feature views defined in `feature_store/config.yml`, creates warehouses, and applies environment-appropriate privileges. Feature views are automatically versioned based on their definition; only breaking changes (query, entities, schema) increment the version.
 
+### Deploy a Project Locally
 
-## Creating ML Projects
+```bash
+# Deploy only (creates resources, uploads code, schedules DAGs)
+python scripts/deploy_project.py example_project
 
-### 1. Create a New Project
+# Deploy and immediately execute all DAGs (useful for testing)
+python scripts/deploy_project.py example_project --run-dag
+```
+
+### Create a New Project
 
 ```bash
 ./scripts/create_project.sh my_project
-cd projects/my_project
 ```
 
-This creates a project from the template with:
-- `config.yml` - DAG configuration
-- `utils.py` - Project utilities
-- `pip-requirements.txt` - Python dependencies for container notebooks and MLJobs.
+This copies the `template/` directory into `projects/my_project` and generates:
+- `config.yml` - DAG and compute resource configuration
+- `utils.py` - Project-level utilities (stage path helpers)
+- `pip-requirements.txt` - Python dependencies for container notebooks and ML Jobs
 
-### 2. Configure Your DAG
-
-Edit `config.yml` to define your ML workflow:
-
-```yaml
-project_name: my_project
-active: False # set to True to deploy the project
-
-deploy:
-  DAGS:
-    - name: TRAINING_PIPELINE
-      tasks:
-        - name: prepare_data
-          file: prepare_data.py      # Python script (direct execution)
-          
-        - name: train_model
-          file: training.py
-          mljob: True                # Run as ML Job (containerized)
-          dep: prepare_data          # Depends on prepare_data task
-          
-        - name: evaluate
-          file: evaluate.ipynb       # Jupyter notebook
-          dep: train_model
-          
-      schedule: CRON 0 3 * * * UTC   # Daily at 3 AM
-      conda_packages:                # Optional additional packages. ONLY necessary for warehouse tasks.
-        - xgboost
-```
-
-**Task Options:**
-- `file`: Python script (`.py`) or Jupyter notebook (`.ipynb`)
-- `mljob`: `True` for containerized execution of `.py` files, `False` for warehouse execution (default)
-- `dep`: Task name(s) this depends on (creates task graph)
-- `final`: `True` for finalizer tasks (run even if dependencies fail)
-
-**Schedule Formats:**
-- CRON: `CRON 0 9 * * * UTC` (daily at 9 AM)
-- Interval: `3 HOURS`, `30 MINUTES`, `5 SECONDS`
-- Empty: Manual trigger only
-
-### 3. Add Your Code
-
-**For Python scripts:**
-```python
-# prepare_data.py
-# Task will execute the main function of the specified script
-# first argument must be session
-def main(session, **kwargs):
-    """Main function for direct execution tasks."""
-    # Your ML code here
-    df = fs.read_feature_view("FEATURE_VIEW")
-    # ... filter and split ...
-    return {"data-version":"abc123"} # If returning values from task, must be dict
-```
-
-**For ML Jobs:**
-```python
-# training.py for containerized execution
-import argparse
-
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--data-version")
-    args = parser.parse_args()
-    # ... train and log model ...
-    return {"model_version":"FANCY_LEMUR_5"} # If returning values from task, must be dict
-
-# MLJob will execute the provided script, must provide main block
-if __name__ == "__main__":
-    __return__ = main() # must return to __return__ to get output from task
-```
-
-**For Snowflake Notebooks:**
-```python
-# To use january_ml package on Snowflake notebook, run:
-from utils import get_stage_packages
-get_stage_packages()
-! pip install -r pip-requirements.txt
-```
-
-### 4. Deploy Your Project
+### Clean Up Resources
 
 ```bash
-# Deploy to Snowflake
-python scripts/deploy_project.py my_project
+# Preview what would be deleted
+python scripts/cleanup.py example_project --dry-run
 
-# Deploy and run immediately (for testing)
-python scripts/deploy_project.py my_project --run-dag
+# Delete all resources for a project
+python scripts/cleanup.py example_project
+
+# Delete specific feature views
+python scripts/cleanup.py --features example_features --dry-run
+python scripts/cleanup.py --features example_features
+
+# Delete everything (all projects, features, stages)
+python scripts/cleanup.py --all --dry-run
+python scripts/cleanup.py --all
 ```
 
-This automatically:
-- Creates project-specific warehouse and compute pool
-- Uploads your code to Snowflake stages
-- Deploys notebooks as Snowflake Notebooks
-- Creates DAG tasks with dependencies
-- Schedules according to your configuration
+---
 
 ## Feature Store
 
-### Configure Features
+### Configuration
 
 Define entities and feature views in `feature_store/config.yml`:
 
 ```yaml
 entities:
-  - name: user
-    join_keys: USER_ID                # column name or list of column names
+  - name: loan_entity
+    join_keys:
+      - LOAN_ID
+
+warehouses:
+  - name: FEATURE_STORE
+    warehouse_size: SMALL
+    auto_suspend: 300
+    default: true
 
 feature_views:
-# provide any optional arguments for FeatureView (https://docs.snowflake.com/en/developer-guide/snowpark-ml/reference/latest/api/feature_store/snowflake.ml.feature_store.FeatureView#snowflake.ml.feature_store.FeatureView)
-  - name: user_activity_features
-    function: create_user_features    # Function in feature_views.py must return Snowpark dataframe
-    entities: user                    # entity or list of entities
-    timestamp_col: CREATED_AT
-    refresh_freq: 1 day               # Optional auto-refresh
+  - name: example_features
+    function: create_example_features   # Function in feature_views.py returning a Snowpark DataFrame
+    entities: loan_entity               # Entity name or list of entity names
+    timestamp_col: TIMESTAMP
+    desc: Example features
+    # warehouse: HEAVY_COMPUTE          # Optional non-default warehouse
+    # refresh_freq: 1 day               # Optional auto-refresh
 ```
+
+### Implementing Feature Views
+
+Add feature generation functions in `feature_store/feature_views.py`. Each function receives a Snowpark `Session` and must return a Snowpark `DataFrame`:
+
+```python
+from snowflake.snowpark import Session, DataFrame
+
+def create_example_features(session: Session) -> DataFrame:
+    df = session.table("BASE_DATA.MORTGAGE_LENDING_DEMO_DATA")
+    # ... feature engineering ...
+    return df.select("LOAN_ID", "TIMESTAMP", "FEATURE1", "FEATURE2")
+```
+
+### Versioning
+
+Feature views are automatically versioned. Breaking changes (query logic, entities, timestamp column, clustering) increment the version number. Non-breaking changes (refresh frequency, warehouse, description) update the existing version in-place.
+
+---
+
+## Creating ML Projects
+
+### Project Configuration
+
+Edit `projects/<project>/config.yml` to define compute resources and DAGs:
+
+```yaml
+project_name: my_project
+active: True  # Set to True to enable deployment
+
+deploy:
+  warehouse:
+    warehouse_size: SMALL
+    auto_suspend: 300
+  compute_pool:
+    instance_family: CPU_X64_XS
+  DAGS:
+    - name: TRAINING_PIPELINE
+      tasks:
+        - name: prepare_data
+          file: prepare_data.py          # Runs on warehouse (direct Python execution)
+        - name: train_model
+          file: training.py
+          mljob: True                    # Runs as ML Job on SPCS compute pool
+          dep: prepare_data
+        - name: evaluate
+          file: evaluate.ipynb           # Runs as Snowflake Notebook
+          dep: train_model
+      schedule: CRON 0 3 * * * UTC
+      conda_packages:
+        - xgboost
+```
+
+### Task Types
+
+| Type | Config | Execution |
+|------|--------|-----------|
+| Warehouse Python | `.py` file, `mljob: false` (default) | Runs `main(session, **kwargs)` directly on warehouse |
+| ML Job (SPCS) | `.py` file, `mljob: true` | Runs as containerized ML Job on compute pool |
+| Notebook | `.ipynb` file | Deploys and executes as Snowflake Notebook Project |
+
+### Schedule Formats
+- **CRON:** `CRON 0 9 * * * UTC` (daily at 9 AM)
+- **Interval:** `3 HOURS`, `30 MINUTES`, `5 SECONDS`
+- **Empty/null:** Manual trigger only
+
+### Passing Data Between Tasks
+
+Tasks can pass data to downstream tasks via return values (must be a `dict`). Downstream tasks declare dependencies via the `dep` field and receive predecessor return values as keyword arguments (warehouse tasks) or CLI arguments (ML Jobs).
+
+---
 
 ## CI/CD Pipeline
 
-The GitHub Actions workflow automatically deploys changes to Snowflake with environment-aware deployments.
+### How It Works
 
-### Setup
+The GitHub Actions workflow (`.github/workflows/deploy.yml`) triggers on any push that changes files in `feature_store/` or `projects/`.
 
-1. **Add GitHub Secrets** (Settings → Secrets and variables → Actions):
-   - `SNOWFLAKE_ACCOUNT` - Your Snowflake account identifier
-   - `SNOWFLAKE_USER` - Snowflake service user username
-   - `SNOWFLAKE_PASSWORD` - Snowflake user password
+**Pipeline steps:**
+1. **Checkout** code with `fetch-depth: 2` for change detection
+2. **Install** uv, Python, dependencies, and build the `ml_utils` wheel
+3. **Detect changes** by diffing `HEAD^ HEAD` to identify modified feature store files and project directories
+4. **Deploy Feature Store** if `feature_store/` files changed
+5. **Deploy Projects** for each project directory with changes (runs with `--run-dag` to validate)
+6. **Deployment Summary** posted to the GitHub Actions step summary
 
-2. **Workflow triggers on push** to any branch when files change in:
-   - `feature_store/` - Redeploys feature store
-   - `projects/` - Redeploys changed projects
+### Environment Routing
 
-### Deployment Flow
+| Trigger | Environment | Snowflake User |
+|---------|-------------|----------------|
+| Push to `main` | `PROD` | `GIT_ACTIONS_PROD` |
+| Push to any other branch | `STAGING` | `GIT_ACTIONS_STAGING` |
 
-The workflow dynamically determines the target environment based on the branch:
+### Change Detection
 
-```
-┌─────────────────────┐
-│   Push to Branch    │
-└──────────┬──────────┘
-           │
-           ▼
-┌─────────────────────┐
-│   GitHub Actions    │
-│    • Build pkg      │
-│    • Detect changes │
-│    • Deploy FS      │
-│    • Deploy proj    │
-└──────────┬──────────┘
-           │
-     ┌─────┴─────┐
-     │           │
-     ▼           ▼
-┌─────────┐ ┌─────────┐
-│ Branch  │ │  main   │
-│ != main │ │ branch  │
-└────┬────┘ └────┬────┘
-     │           │
-     ▼           ▼
-┌─────────┐ ┌─────────┐
-│ STAGING │ │  PROD   │
-└─────────┘ └─────────┘
-```
+The pipeline only deploys what changed:
+- Changes in `feature_store/` trigger feature store redeployment
+- Changes in `projects/<name>/` trigger redeployment of that specific project
+- Multiple projects can be deployed in a single run
 
-**Environment Configuration:**
-- **Feature branches** → Deploy to `STAGING` environment
-- **Merge to main** → Deploy to `PROD` environment
-- **Local development** → Use `DEV` environment (sandbox)
+### Deployment Behavior by Environment
+
+| Behavior | DEV (local) | STAGING (CI/CD) | PROD (CI/CD) |
+|----------|-------------|-----------------|--------------|
+| Feature views | Active | Suspended after deploy | Active with schedule |
+| DAGs | Suspended after deploy | Suspended after deploy (run once for validation) | Active with schedule |
+| Privileges | Full access | Read-only / monitor | Read-only / monitor |
+
+---
 
 ## Repository Structure
 
 ```
-snowflake-ml-collaboration/
-├── .github/workflows/     # CI/CD pipeline
-├── feature_store/         # Feature store configuration
-│   ├── config.yml
-│   ├── feature_views.py
-│   └── setup_feature_store.py
-├── projects/              # Your ML projects
-│   └── my_project/
-│       ├── config.yml
-│       ├── training.py
-│       └── pip-requirements.txt
-├── template/              # Project template
-├── january_ml/            # Shared utilities package
+ml-pipelines/
+├── .github/workflows/
+│   └── deploy.yml              # CI/CD pipeline
+├── feature_store/
+│   ├── config.yml              # Entity, warehouse, and feature view definitions
+│   ├── feature_views.py        # Feature generation functions
+│   └── setup_feature_store.py  # Feature store deployment script
+├── projects/
+│   └── example_project/
+│       ├── config.yml           # DAG and compute config
+│       ├── training.py          # ML Job script
+│       ├── training.ipynb       # Notebook task
+│       ├── inference.py         # Warehouse task
+│       ├── prepare_data.py      # Data preparation
+│       ├── promote_model.py     # Model promotion
+│       ├── utils.py             # Project utilities
+│       └── pip-requirements.txt # SPCS/notebook dependencies
+├── template/                    # New project template
+├── ml_utils/                    # Shared utilities package
+│   ├── snowflake_env.py         # Environment config and session management
+│   └── utils.py                 # Shared helpers (e.g., version_data)
 ├── scripts/
-│   ├── create_project.sh  # Create new project
-│   ├── deploy_project.py  # Deploy to Snowflake
-│   └── cleanup.py         # Remove deployed resources
-└── dist/                  # Built packages
-```
-
-## Best Practices
-
-### Project Organization
-- ✅ One project per ML use case
-- ✅ Keep projects self-contained
-- ✅ Use descriptive task names
-- ✅ Test locally before deploying
-
-### Task Dependencies
-- ✅ Use `mljob: True` for compute-intensive tasks
-- ✅ Use direct execution for lightweight orchestration
-- ✅ Pass data via return values or tables
-- ✅ Create clear task graphs with meaningful dependencies
-
-### Feature Engineering
-- ✅ Centralize features in feature store
-- ✅ Use timestamp columns for point-in-time correctness
-- ✅ Let automatic versioning handle feature lineage
-- ✅ Document feature view purposes
-
-### CI/CD
-- ✅ Test changes locally in DEV environment
-- ✅ Push to feature branch → auto-deploys to STAGING
-- ✅ Merge to main → auto-deploys to PROD
-- ✅ Use `--run-dag` flag for smoke tests
-- ✅ Review DAG configurations in Snowflake UI
-- ✅ Monitor task execution history
-
-## Common Operations
-
-### View Deployed DAGs
-```sql
--- In Snowflake
-SHOW TASKS IN SCHEMA;
-DESCRIBE TASK MY_PROJECT_TRAINING_PIPELINE;
-```
-
-### Check Task History
-```sql
-SELECT * 
-FROM TABLE(INFORMATION_SCHEMA.TASK_HISTORY())
-WHERE NAME LIKE 'MY_PROJECT%'
-ORDER BY SCHEDULED_TIME DESC;
-```
-
-### Update a Project
-```bash
-# 1. Make changes to your project code/config
-# 2. Redeploy
-python scripts/deploy_project.py my_project
-```
-
-### Delete a Project's Resources
-
-Use the cleanup script to remove all Snowflake resources for a project:
-
-```bash
-# Preview what would be deleted (recommended first step)
-python scripts/cleanup.py my_project --dry-run
-
-# Actually delete all resources for the project
-python scripts/cleanup.py my_project
-```
-
-This removes:
-- DAGs/Tasks (including all child tasks)
-- Notebooks
-- Staged files in BUILD_STAGE and JOB_STAGE
-- Compute pool
-- Warehouse
-
-### Delete Feature Store Resources
-
-```bash
-# Delete specific feature views
-python scripts/cleanup.py --features user_activity_features --dry-run
-python scripts/cleanup.py --features user_activity_features
-
-# Delete multiple feature views
-python scripts/cleanup.py --features feature1 feature2 feature3
-```
-
-### Delete All Resources
-
-```bash
-# Preview full cleanup
-python scripts/cleanup.py --all --dry-run
-
-# Delete everything: all projects, all features, and stages
-python scripts/cleanup.py --all
+│   ├── create_project.sh        # Create new project from template
+│   ├── deploy_project.py        # Deploy project to Snowflake
+│   └── cleanup.py               # Remove deployed resources
+├── setup/
+│   ├── setup.sql                # Environment bootstrap SQL
+│   └── MORTGAGE_LENDING_DEMO_DATA.csv.gz
+├── pyproject.toml               # Package definition
+└── dist/                        # Built ml_utils wheel
 ```
 
 ## Troubleshooting
 
-**Issue: Task fails with import error**
+**Task fails with import error**
 - Ensure `pip-requirements.txt` includes all dependencies
-- Rebuild `january_ml`: `python -m build`
-- Redeploy project
+- Rebuild `ml_utils`: `uv build`
+- Redeploy the project
 
-**Issue: DAG doesn't run on schedule**
-- Check task is in STARTED state: `SHOW TASKS`
+**DAG doesn't run on schedule**
+- Check the root task is in STARTED state: `SHOW TASKS IN SCHEMA;`
 - Verify schedule format in `config.yml`
-- Check warehouse is running
+- Confirm the environment is PROD (non-PROD DAGs are suspended after deploy)
 
-**Issue: Feature store entity not found**
-- Register entities before feature views
-- Verify entity names match exactly
+**Feature store entity not found**
+- Entities must be registered before feature views
+- Verify entity names match exactly in `config.yml`
+
+**CI/CD deploy fails with authentication error**
+- Verify all five GitHub secrets are set correctly
+- Ensure service users exist and have the correct roles granted
+- Check network policy allows GitHub Actions runner IPs
 
 ## Resources
 
 - [Snowflake Tasks & DAGs](https://docs.snowflake.com/en/user-guide/tasks-intro)
 - [Snowflake ML Jobs](https://docs.snowflake.com/en/developer-guide/snowpark-ml/ml-jobs)
 - [Snowflake Feature Store](https://docs.snowflake.com/en/developer-guide/snowpark-ml/feature-store/overview)
-
----
-
-**Questions?** Check task history in Snowflake or review deployment logs in GitHub Actions.
+- [Snowflake Notebook Projects](https://docs.snowflake.com/en/user-guide/ui-snowsight/notebooks)
