@@ -1,4 +1,4 @@
 # This file specifies packages needed for SPCS based tasks (container notebooks and mljobs)
-#./dist/ml_utils-0.0.1-py3-none-any.whl
+# The shared ml_utils package will be loaded automatically to ml_jobs and by using the install_stage_package function in notebooks
 snowflake-snowpark-python
 snowflake-ml-python

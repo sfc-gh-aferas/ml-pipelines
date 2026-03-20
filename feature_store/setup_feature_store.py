@@ -8,7 +8,7 @@ This script initializes and configures a Snowflake Feature Store by:
   - Registering feature views with automated versioning and optional warehouse assignment
 
 Feature views are defined in feature_views.py and referenced by name in config.yml.
-Each feature view is automatically versioned based on its definition hash.
+Each feature view is automatically versioned based on its definition attributes.
 Warehouses can be configured in config.yml with one marked as default, and others
 can be assigned to specific feature views via the warehouse argument.
 
@@ -192,10 +192,10 @@ def _create_warehouses(session: Session, warehouse_configs: Dict[str, Dict[str, 
     """
     Create all configured warehouses in Snowflake.
     
-    Creates warehouses using CREATE OR REPLACE to ensure the warehouse exists
-    with the specified configuration. Returns the default warehouse name for
-    use in Feature Store initialization. Grants appropriate privileges based
-    on the current environment.
+    Creates warehouses using CREATE IF NOT EXISTS and updates their properties
+    with ALTER WAREHOUSE. Returns the default warehouse name for use in
+    Feature Store initialization. Grants appropriate privileges based on
+    the current environment.
     
     Args:
         session (Session): Active Snowflake session
@@ -206,7 +206,7 @@ def _create_warehouses(session: Session, warehouse_configs: Dict[str, Dict[str, 
         str: The name of the default warehouse.
     
     Side Effects:
-        Creates or replaces warehouses in Snowflake.
+        Creates warehouses in Snowflake if they don't exist; alters properties if specified.
         Grants privileges to ML_ENGINEER and EXTERNAL_SNOWFLAKE_ARCHITECTS roles.
     """
     default_warehouse = warehouse_configs.pop("_default")

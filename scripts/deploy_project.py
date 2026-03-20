@@ -79,9 +79,9 @@ def _grant_privileges(session: Session, object_type: str, object_name: str) -> N
     """
     Grant privileges on a Snowflake object to configured roles based on environment.
     
-    Applies environment-appropriate privileges to the ML_ENGINEER and 
-    EXTERNAL_SNOWFLAKE_ARCHITECTS roles. DEV environment gets full access,
-    while STAGING and PROD environments get monitoring/viewing privileges only.
+    Applies environment-appropriate privileges to the ACCOUNTADMIN role.
+    DEV environment gets full access, while STAGING and PROD environments
+    get monitoring/viewing privileges only.
     
     Args:
         session (Session): Active Snowflake session
@@ -180,10 +180,10 @@ def stage_directory(session: Session, project_dir: str) -> list[str]:
     """
     Upload project files and dependencies to Snowflake stages.
     
-    Creates two Snowflake stages (BUILD_STAGE, JOB_STAGE) if they don't exist,
-    removes any previous project files from these stages, and uploads all files
-    from the project directory along with the ml_utils package wheel.
-    Grants appropriate privileges based on the current environment.
+    Removes any previous project files from BUILD_STAGE and JOB_STAGE,
+    then uploads all files from the project directory along with the
+    ml_utils package wheel. Grants appropriate privileges based on
+    the current environment.
     
     Args:
         session (Session): Active Snowflake session
@@ -227,11 +227,10 @@ def _deploy_notebook(session: Session, project_name: str) -> str:
     
     Args:
         session (Session): Active Snowflake session
-        notebook_file (str): Name of the .ipynb file (e.g., 'training.ipynb')
-        project_name (str): Project name used as namespace prefix
+        project_name (str): Project name used as the notebook object name
     
     Returns:
-        str: Fully qualified name of the deployed notebook (DB.SCHEMA.PROJECT__NOTEBOOK)
+        str: Fully qualified name of the deployed notebook (DB.SCHEMA.PROJECT_NAME)
     
     """
     # Create fully qualified notebook name with project namespace
@@ -285,17 +284,19 @@ def _get_return_vals(task_context: TaskContext, return_from_tasks: list, script_
 
 def _get_notebook_sql(session:Session, fully_qualified_name: str, notebook_file:str, return_from_tasks: list = []) -> Callable:
     """
-    Create a SQL string executes a deployed Snowflake Notebook.
+    Create a SQL string that executes a deployed Snowflake Notebook.
     
-    The function executes the notebook with parameters from predecessor tasks.
-    Handles cases where no parameters are provided (executes with empty params).
+    Builds an EXECUTE NOTEBOOK PROJECT statement with parameters from
+    predecessor tasks. Handles cases where no parameters are provided.
     
     Args:
+        session (Session): Active Snowflake session (used to read predecessor return values)
         fully_qualified_name (str): Full notebook name (DB.SCHEMA.NOTEBOOK_NAME)
+        notebook_file (str): Name of the .ipynb file to execute as MAIN_FILE
         return_from_tasks (list): Task names to retrieve parameters from
     
     Returns:
-        Callable: Function that executes the notebook when called with a session
+        str: SQL string for EXECUTE NOTEBOOK PROJECT
     """
     ctx = TaskContext(session)
     # Get parameters from predecessor tasks and format as SQL arguments
@@ -713,7 +714,7 @@ def _create_compute_resources(session: Session, project_name: str, compute_resou
     
     Side Effects:
         Sets global variables WAREHOUSE and COMPUTE_POOL
-        Grants privileges to ML_ENGINEER and EXTERNAL_SNOWFLAKE_ARCHITECTS roles
+        Grants privileges to ACCOUNTADMIN role
     
     Note:
         Non-alphanumeric characters in project_name are replaced with underscores
@@ -754,14 +755,14 @@ def _create_compute_resources(session: Session, project_name: str, compute_resou
     # Grant privileges on compute pool based on environment
     _grant_privileges(session, "compute_pool", COMPUTE_POOL)
 
-def _deprecate_dags(session: Session, project_name: str, deployed_dags: list[dict]) -> None:
+def _deprecate_dags(session: Session, project_name: str, deployed_dags: list[DAG]) -> None:
     """
     Deprecate DAGs that are not in config file.
     
     Args:
         session: Snowflake session
         project_name: Project name
-        dags: List of DAG configurations
+        deployed_dags: List of deployed DAG objects
     """
 
     project_dags = session.sql(f"""
