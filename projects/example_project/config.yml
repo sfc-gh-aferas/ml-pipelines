@@ -8,6 +8,8 @@ deploy:
     auto_suspend: 300
   compute_pool:
     instance_family: CPU_X64_XS
+    #max_nodes: 3
+
   DAGS:
     - name: EXAMPLE1
       tasks:
@@ -26,6 +28,7 @@ deploy:
         - name: train
           file: training.py
           mljob: True
+          #target_instances: 3
           dep: prepare
         - name: promote
           file: promote_model.py
