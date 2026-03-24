@@ -9,7 +9,6 @@ Can also be run as a standalone script for ML Job entrypoints via:
     python task_wrapper.py --filename <module>
 """
 import importlib
-from argparse import ArgumentParser
 import sys
 import os
 from snowflake.snowpark import Session
@@ -92,9 +91,6 @@ def task_func(session:Session) -> dict:
 
 if __name__ == "__main__":
 
-    parser = ArgumentParser()
-    parser.add_argument("--filename")
-    args = parser.parse_args()
     
     session = Session.builder.getOrCreate()
 

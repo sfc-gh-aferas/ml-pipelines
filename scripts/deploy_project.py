@@ -287,7 +287,7 @@ def _get_notebook_sql(fully_qualified_name: str, notebook_file:str, return_from_
     """
     return nb_exec_sql
 
-def _get_mljob_runner(name:str, project_name: str) -> Callable:
+def _get_mljob_runner(name:str, project_name: str, target_instances: int = 1) -> Callable:
     """
     Register an MLJobDefinition for running a Python script as a Snowflake ML Job.
     
@@ -313,6 +313,7 @@ def _get_mljob_runner(name:str, project_name: str) -> Callable:
         stage_name=JOB_STAGE,
         pip_requirements=["-r ../app/pip-requirements.txt", "../app/dist/ml_utils-0.0.1-py3-none-any.whl"],
         name=name,
+        target_instances=target_instances,
     )
 
     return job_func
@@ -384,7 +385,11 @@ def _get_task_definition(
     elif filetype == ".py":
         if task_definition["mljob"]:
             # Use ML Job for container-based execution
-            task_func = _get_mljob_runner(name=filename,project_name=project_name)
+            task_func = _get_mljob_runner(
+                name=filename,
+                project_name=project_name,
+                target_instances=task_definition["target_instances"],
+            )
         else:
             # Use direct Python function execution
             task_func = _get_func_runner()
@@ -461,7 +466,7 @@ def _validate_dags(dags: list[dict]) -> list[dict]:
                 file=task_config["file"],
                 dep=task_config.get("dep",[]),  # Dependencies (predecessor tasks)
                 final=task_config.get("final",False),  # Is this a finalizer task?
-                mljob=task_config.get("mljob",False)  # Run as ML job?
+                mljob=task_config.get("mljob",False)  # Run as ML job? 
             )
             
             # Ensure dependencies is always a list
@@ -474,7 +479,12 @@ def _validate_dags(dags: list[dict]) -> list[dict]:
             if not isinstance(valid_dict["mljob"],bool):
                 raise ValueError("Config 'mljob' must be True or False")
             
+            # Only used if MLJob
+            if valid_dict["mljob"]:
+                valid_dict["target_instances"] = task_config.get("target_instances",1)
+
             valid_dag["tasks"].append(valid_dict)
+            
         valid_list.append(valid_dag)
     
     return valid_list
