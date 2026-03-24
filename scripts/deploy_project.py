@@ -30,10 +30,11 @@ from collections.abc import Callable
 from typing import Union
 from snowflake.snowpark.session import Session
 from snowflake.core import CreateMode, Root
-from snowflake.ml.jobs import submit_from_stage
+from snowflake.ml.jobs import MLJobDefinition
 from snowflake.core.task.dagv1 import DAG, DAGTask, DAGOperation
 from snowflake.core.task.context import TaskContext
 from snowflake.core.task import Cron
+from task_wrapper import _get_return_vals, task_func
 from ml_utils.snowflake_env import (
     get_session,
     ENVIRONMENT,
@@ -216,6 +217,16 @@ def stage_directory(session: Session, project_dir: str) -> list[str]:
         auto_compress=False
     )
     staged_files.append(f"@{BUILD_STAGE}/{project_dir}/dist/{result[0].target}")
+
+    # Upload the task_wrapper utility used as the entrypoint for ML jobs and function tasks
+    result = session.file.put(
+        "scripts/task_wrapper.py",
+        f"{BUILD_STAGE}/{project_dir}", 
+        overwrite=True, 
+        auto_compress=False
+    )
+    staged_files.append(f"@{BUILD_STAGE}/{project_dir}/{result[0].target}")
+    
     print(f"{project_dir} uploaded to {BUILD_STAGE}")
     return staged_files
 
@@ -246,43 +257,7 @@ def _deploy_notebook(session: Session, project_name: str) -> str:
     print(f"Successfully deployed notebook {fully_qualified_name}")
     return fully_qualified_name
 
-def _get_return_vals(task_context: TaskContext, return_from_tasks: list, script_args: bool = False) -> Union[list,dict]:
-    """
-    Retrieve and parse return values from predecessor tasks in a DAG.
-    
-    Extracts return values from specified predecessor tasks and formats them
-    either as command-line arguments (for scripts) or as a dictionary (for functions).
-    Handles empty or None results gracefully by skipping them.
-    
-    Args:
-        task_context (TaskContext): Current task execution context
-        return_from_tasks (list): List of predecessor task names to get values from
-        script_args (bool): If True, format as CLI args (--key value); if False, return as dict
-    
-    Returns:
-        Union[list, dict]: Either a list of CLI arguments ['--key1', 'val1', '--key2', 'val2']
-                          or a merged dictionary {'key1': 'val1', 'key2': 'val2'}
-    
-    Note:
-        TODO: Add validation for return value format and task existence
-    """
-    kw = [] if script_args else {}
-    for task in return_from_tasks:
-        result = task_context.get_predecessor_return_value(task).replace("'",'"')
-        if result:
-            try:
-                val = json.loads(result)
-            except json.JSONDecodeError:
-                raise ValueError(f"Return value from task {task} is not a dictionary")
-            if not isinstance(val, dict):
-                raise ValueError(f"Return value from task {task} is not a dictionary")
-            if script_args:
-                kw += [i for k,v in val.items() for i in ("--"+str(k),str(v))]
-            else:
-                kw.update(val)         
-    return kw
-
-def _get_notebook_sql(session:Session, fully_qualified_name: str, notebook_file:str, return_from_tasks: list = []) -> Callable:
+def _get_notebook_sql(fully_qualified_name: str, notebook_file:str, return_from_tasks:list=[]) -> str:
     """
     Create a SQL string that executes a deployed Snowflake Notebook.
     
@@ -290,7 +265,6 @@ def _get_notebook_sql(session:Session, fully_qualified_name: str, notebook_file:
     predecessor tasks. Handles cases where no parameters are provided.
     
     Args:
-        session (Session): Active Snowflake session (used to read predecessor return values)
         fully_qualified_name (str): Full notebook name (DB.SCHEMA.NOTEBOOK_NAME)
         notebook_file (str): Name of the .ipynb file to execute as MAIN_FILE
         return_from_tasks (list): Task names to retrieve parameters from
@@ -310,119 +284,91 @@ def _get_notebook_sql(session:Session, fully_qualified_name: str, notebook_file:
             RUNTIME = 'V2.3-CPU-PY3.10'
             COMPUTE_POOL = {COMPUTE_POOL}
             ARGUMENTS = '{params}';
-    """        
+    """
     return nb_exec_sql
 
-def _get_mljob_runner(filename: str, project_name: str, return_from_tasks: list = []) -> Callable:
+def _get_mljob_runner(name:str, project_name: str) -> Callable:
     """
-    Create a task function that submits and runs a Python script as a Snowflake ML Job.
+    Register an MLJobDefinition for running a Python script as a Snowflake ML Job.
     
-    Returns a callable that submits a Python script from BUILD_STAGE as a Snowflake ML Job
-    with dependencies and parameters from predecessor tasks. The job runs on the dynamically
-    created COMPUTE_POOL with isolated container execution. Includes pip requirements from
-    the project's pip-requirements.txt and the ml_utils package wheel.
+    Registers a job definition from BUILD_STAGE using task_wrapper.py as the entrypoint.
+    The task wrapper resolves the actual script filename and predecessor task parameters
+    at runtime via the DAG config. The job runs on the dynamically created COMPUTE_POOL
+    with pip requirements from the project's pip-requirements.txt and the ml_utils wheel.
     
     Args:
-        filename (str): Python script filename to execute (e.g., 'training.py')
+        name (str): Job name used to register the MLJobDefinition
         project_name (str): Project name for stage path resolution
-        return_from_tasks (list): Task names to retrieve parameters from
     
     Returns:
-        Callable: Function that submits and waits for the ML job when called with a session
-    """
-    def job_func(session: Session) ->  str:
-        ctx = TaskContext(session)
-        # Get command-line arguments from predecessor tasks
-        params = _get_return_vals(task_context=ctx, return_from_tasks=return_from_tasks, script_args=True)
-            
-        # Submit Python script as ML job with dependencies
-
-        stage_path = f"@{BUILD_STAGE}/{project_name}"
-        job = submit_from_stage(
-            source=stage_path,
-            compute_pool=COMPUTE_POOL,
-            entrypoint=f"{filename}",
-            stage_name=JOB_STAGE,
-            session=session,
-            args=params,
-            pip_requirements=["-r ../app/pip-requirements.txt", "../app/dist/ml_utils-0.0.1-py3-none-any.whl"],
-        )
-        # Store and return job results for downstream tasks
-        results = job.result() if job.result() else ""
-        ctx.set_return_value(results)
-        return job.result()
+        Callable: Registered MLJobDefinition ready to be used as a DAG task
+    """     
+    # Submit Python script as ML job with dependencies
+    stage_path = f"@{BUILD_STAGE}/{project_name}"
+    job_func = MLJobDefinition.register(
+        stage_path,
+        # If you register a source directory, provide the entrypoint file:
+        entrypoint="task_wrapper.py",
+        compute_pool=COMPUTE_POOL,
+        stage_name=JOB_STAGE,
+        pip_requirements=["-r ../app/pip-requirements.txt", "../app/dist/ml_utils-0.0.1-py3-none-any.whl"],
+        name=name,
+    )
 
     return job_func
 
-def _get_func_runner(filename: str, return_from_tasks: list = []) -> Callable:
+def _get_func_runner() -> Callable:
     """
     Create a task function that executes a Python module's main() function.
     
-    Returns a callable that imports and runs a Python module's main() function
-    with parameters from predecessor tasks. Used for lightweight Python tasks
-    that don't require ML Job submission. Adds the ml_utils wheel to sys.path
-    and passes the Snowflake session to the module's main function.
-    
-    Args:
-        filename (str): Python module filename (e.g., 'utils.py')
-        return_from_tasks (list): Task names to retrieve parameters from
+    Returns a callable that delegates to task_func from task_wrapper,
+    which resolves the target module and predecessor task parameters at runtime
+    via the DAG config. Used for lightweight Python tasks that don't require
+    ML Job container execution. Adds the ml_utils wheel to sys.path.
     
     Returns:
         Callable: Function that imports and runs the module when called with a session
     
     Note:
-        The module's main() function must accept a 'session' parameter
+        The target module's main() function must accept a 'session' parameter.
+        The actual filename and dependencies are resolved from the DAG config at runtime.
     """
     def func(session: Session) -> str:
         import_dir = sys._xoptions.get("snowflake_import_directory")
         # Add the name of the wheel file to the system path
         sys.path.append(import_dir + 'ml_utils-0.0.1-py3-none-any.whl')
 
-        ctx = TaskContext(session)
-        # Get parameters as dictionary for **kwargs
-        params = _get_return_vals(task_context=ctx, return_from_tasks=return_from_tasks)
+        results = task_func(session)
 
-        # Dynamically import and execute the module's main function
-        mod_name = os.path.splitext(filename)[0]
-        module = importlib.import_module(mod_name)
-        results = module.main(session=session, **params)
-
-        # Store results for downstream tasks
-        results = results if results else ""
-        ctx.set_return_value(results)
         return results
 
     return func
 
 def _get_task_definition(
     session: Session,
-    file: str, 
+    task_definition:dict,
     project_name: str,
-    mljob: bool,
-    return_from_tasks: list = []
 ) -> Callable:
     """
     Create an appropriate task function based on file type and execution mode.
     
     Routes to the correct runner based on file extension and configuration:
-    - .ipynb files: Deploy as Snowflake Notebook and return notebook runner
-    - .py files with mljob=True: Return ML Job runner for container execution
-    - .py files with mljob=False: Return function runner for direct Python execution
+    - .ipynb files: Deploy as Snowflake Notebook and return notebook SQL string
+    - .py files with mljob=True: Register an MLJobDefinition for container execution
+    - .py files with mljob=False: Return function runner using task_wrapper for direct execution
     
     Args:
         session (Session): Active Snowflake session
-        file (str): Filename with extension (.py or .ipynb)
+        task_definition (dict): Task configuration dict with keys 'file', 'dep', 'mljob', 'final', 'name'
         project_name (str): Project name for namespace/path resolution
-        mljob (bool): If True, run Python scripts as ML jobs; if False, run directly
-        return_from_tasks (list): Predecessor task names for parameter passing
     
     Returns:
-        Callable: Task function ready to be used in a DAG definition
+        Union[Callable, str]: Task function or SQL string ready to be used in a DAG definition
     
     Raises:
         ValueError: If file extension is not .py or .ipynb
     """
-    filename, filetype = os.path.splitext(file)
+    filename, filetype = os.path.splitext(task_definition["file"])
     
     if filetype == ".ipynb":
         # Deploy notebook to Snowflake and create runner
@@ -431,25 +377,17 @@ def _get_task_definition(
             project_name=project_name,
         )
         task_func = _get_notebook_sql(
-            session=session,
-            fully_qualified_name=fully_qualified_name,
-            notebook_file=file,
-            return_from_tasks=return_from_tasks,
+            fully_qualified_name=fully_qualified_name, 
+            notebook_file=task_definition["file"],
+            return_from_tasks=task_definition["dep"],
         )
     elif filetype == ".py":
-        if mljob:
+        if task_definition["mljob"]:
             # Use ML Job for container-based execution
-            task_func = _get_mljob_runner(
-                filename=file,
-                project_name=project_name,
-                return_from_tasks=return_from_tasks,
-            )
+            task_func = _get_mljob_runner(name=filename,project_name=project_name)
         else:
             # Use direct Python function execution
-            task_func = _get_func_runner(
-                filename=file,
-                return_from_tasks=return_from_tasks,
-            )
+            task_func = _get_func_runner()
     else:
         raise ValueError("Filetype must be py or ipynb")
     
@@ -570,6 +508,12 @@ def create_dag(
     Returns:
         DAG: Configured Snowflake DAG object ready for deployment
     """
+    # Flatten task configs into a single dict keyed by TASKNAME_field for DAG-level config.
+    # This allows task_wrapper to resolve each task's filename and dependencies at runtime.
+    config = {
+        t["name"].upper()+"_"+k:json.dumps(v) if isinstance(v,list) else v 
+        for t in tasks for k,v in t.items()
+    }
     with DAG(
         name=f"{project_name}_{dag_name}",
         schedule=schedule, 
@@ -577,6 +521,7 @@ def create_dag(
         stage_location=JOB_STAGE,
         packages=packages,
         imports=imports,
+        config=config,
     ) as dag:
         task_ref = {}  # Track created tasks for dependency resolution
         
@@ -584,10 +529,8 @@ def create_dag(
             # Create appropriate task function based on file type and config
             task_func = _get_task_definition(
                 session=session,
-                file=t['file'],
+                task_definition=t,
                 project_name=project_name,
-                mljob=t["mljob"],
-                return_from_tasks=t["dep"],
             )
             
             # Create DAG task with the function
